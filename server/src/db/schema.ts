@@ -43,6 +43,7 @@ export const DDL: string[] = [
     published_at TEXT,
     heat_score INTEGER NOT NULL DEFAULT 0,
     fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+    description TEXT,
     UNIQUE(source, external_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at)`,
@@ -68,5 +69,5 @@ export const DDL: string[] = [
   )`,
 ];
 
-/** FTS5 可用时建全文索引虚拟表；不可用则跳过（检索降级 LIKE）。 */
-export const DDL_FTS = `CREATE VIRTUAL TABLE IF NOT EXISTS news_fts USING fts5(title, title_zh, content='news_items', content_rowid='id')`;
+/** FTS5 可用时建全文索引虚拟表（独立内容，rowid 对应 news_items.id）；不可用则跳过（检索降级 LIKE）。 */
+export const DDL_FTS = `CREATE VIRTUAL TABLE IF NOT EXISTS news_fts USING fts5(title, title_zh)`;

@@ -20,6 +20,7 @@ export function createRssFetcher(
     const items = feed.items ?? [];
     return items.map((it, rank) => {
       const guid = it.guid ?? it.link ?? String(rank);
+      const record = it as unknown as { content?: string; contentSnippet?: string };
       return {
         external_id: String(guid),
         title: it.title ?? "(无标题)",
@@ -27,6 +28,7 @@ export function createRssFetcher(
         published_at: it.isoDate ?? null,
         heat_score: heatFromRank(rank, items.length),
         rank,
+        description: record.contentSnippet ?? record.content ?? null,
       } satisfies RawItem;
     });
   }

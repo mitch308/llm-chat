@@ -14,6 +14,8 @@ export interface RawItem {
   published_at: string | null;
   heat_score: number;
   rank?: number;
+  /** RSS 简介/正文片段，作为正文抽取失败的降级来源。 */
+  description?: string | null;
 }
 
 export interface NewsFetcher {

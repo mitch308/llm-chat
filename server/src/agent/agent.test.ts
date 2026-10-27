@@ -218,4 +218,68 @@ describe("runAgent", () => {
     await collect(llm);
     expect(round2Seen).toBe(true);
   });
+
+  it("news flow: search_news tool → NewsList spec", async () => {
+    const searched: unknown[] = [];
+    const newsSearch = async (q: unknown) => {
+      searched.push(q);
+      return {
+        items: [
+          {
+            id: 1,
+            source: "hackernews",
+            external_id: "hn-1",
+            title: "AI release",
+            title_zh: "AI 大发布",
+            summary_zh: "新模型发布，性能提升。",
+            url: "https://hn/1",
+            published_at: "2026-10-27T08:00:00Z",
+            heat_score: 90,
+          },
+        ],
+        dataTime: "2026-10-27T10:00:00Z",
+        skippedSources: ["bbc"],
+        failedSources: [],
+      };
+    };
+
+    const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [
+          {
+            type: "tool_calls",
+            calls: [
+              {
+                id: "c1",
+                name: "search_news",
+                arguments: JSON.stringify({ keywords: ["AI"], mode: "keyword" }),
+              },
+            ],
+          },
+        ];
+      }
+      if (n === 1) {
+        return [
+          { type: "text", delta: "查到这些新闻：\n" },
+          {
+            type: "text",
+            delta:
+              '{"op":"add","path":"/root","value":"n1"}\n{"op":"add","path":"/elements/n1","value":{"type":"NewsList","props":{"items":[{"title_zh":"AI 大发布"}]},"children":[]}}\n',
+          },
+        ];
+      }
+      return [];
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({ db, llm, content: "查AI新闻", newsSearch: newsSearch as never })) {
+      events.push(ev);
+    }
+
+    expect(events[0]).toEqual({ type: "tool", name: "search_news" });
+    expect(searched[0]).toMatchObject({ keywords: ["AI"], mode: "keyword" });
+    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
+    expect(specs.some((s) => s.line.includes("NewsList"))).toBe(true);
+    expect(events[events.length - 1].type).toBe("done");
+  });
 });

@@ -8,6 +8,9 @@ import { createOpsService } from "../ops/ops.service";
 import { attachQuip, runBillAction, storeResult, type OpAction } from "../ops/ops.executor";
 import { billStats, listBills } from "../bills/bills.service";
 import { TOOL_DEFS } from "./tools";
+import { createNewsService, type NewsSearchResult, type SearchNewsQuery } from "../news/news.service";
+import { buildSourceFetchers } from "../news/fetchers";
+import type { SourceId } from "../news/sources";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -73,10 +76,15 @@ export async function* runAgent(opts: {
   db: Database;
   llm: LLMClient;
   content: string;
+  /** 可注入的新闻检索（测试用）；默认按需抓取的真实服务。 */
+  newsSearch?: (q: SearchNewsQuery) => Promise<NewsSearchResult>;
 }): AsyncIterable<AgentEvent> {
   const { db, llm, content } = opts;
   const messages = createMessagesService(db);
   const ops = createOpsService(db);
+  const newsSearch =
+    opts.newsSearch ??
+    createNewsService({ db, llm, fetchers: buildSourceFetchers() }).searchNews;
 
   messages.appendMessage({ role: "user", contentText: content });
   const { system, messages: history } = buildContext(db);
@@ -181,12 +189,24 @@ export async function* runAgent(opts: {
         }
       }
       case "search_news": {
-        // Task 16 前的 stub
-        return JSON.stringify({
-          ok: true,
-          items: [],
-          note: "新闻数据源尚未接入，请如实告知用户暂时无法查新闻",
-        });
+        const keywords = Array.isArray(a.keywords) ? (a.keywords as string[]) : [];
+        const mode = a.mode === "hot" ? "hot" : keywords.length > 0 ? "keyword" : "hot";
+        try {
+          const result = await newsSearch({
+            keywords,
+            mode,
+            source: typeof a.source === "string" ? (a.source as SourceId) : undefined,
+            from: typeof a.from === "string" ? a.from : undefined,
+            to: typeof a.to === "string" ? a.to : undefined,
+            limit: typeof a.limit === "number" ? a.limit : undefined,
+          });
+          return JSON.stringify({ ok: true, ...result });
+        } catch (err) {
+          return JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : "新闻查询失败",
+          });
+        }
       }
       default:
         return JSON.stringify({ ok: false, error: `未知工具: ${call.name}` });
