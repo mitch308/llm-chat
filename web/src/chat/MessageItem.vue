@@ -1,15 +1,27 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import { Renderer, StateProvider, VisibilityProvider } from "@json-render/vue";
+import { registry } from "../render/registry";
+import { linesToSpec } from "../render/specCompile";
 import type { ChatMsg } from "./types";
 
-defineProps<{ msg: ChatMsg }>();
+const props = defineProps<{ msg: ChatMsg }>();
+
+const spec = computed(() =>
+  props.msg.specLines.length > 0 ? linesToSpec(props.msg.specLines) : null,
+);
 </script>
 
 <template>
   <div class="message" :class="msg.role">
     <div class="bubble">
-      <span class="text">{{ msg.text }}</span>
-      <div v-if="msg.specLines.length" class="spec-placeholder">
-        [{{ msg.specLines.length }} 行界面数据 — Task 14 渲染]
+      <span v-if="msg.text" class="text">{{ msg.text }}</span>
+      <div v-if="msg.specLines.length" class="rendered-ui">
+        <StateProvider>
+          <VisibilityProvider>
+            <Renderer v-if="spec" :spec="spec" :registry="registry" />
+          </VisibilityProvider>
+        </StateProvider>
       </div>
     </div>
   </div>
@@ -24,7 +36,7 @@ defineProps<{ msg: ChatMsg }>();
   justify-content: flex-end;
 }
 .bubble {
-  max-width: 72%;
+  max-width: 76%;
   padding: 8px 12px;
   border-radius: 12px;
   background: #f3f4f6;
@@ -35,14 +47,8 @@ defineProps<{ msg: ChatMsg }>();
   background: #3b82f6;
   color: #fff;
 }
-.spec-placeholder {
+.rendered-ui {
   margin-top: 6px;
-  font-size: 12px;
-  color: #6b7280;
-  border-top: 1px dashed #d1d5db;
-  padding-top: 6px;
-}
-.message.user .spec-placeholder {
-  display: none;
+  white-space: normal;
 }
 </style>

@@ -1,49 +1,34 @@
-import { ref, type Ref } from "vue";
-import { getMessages, streamChat } from "../api/client";
-import type { ChatMsg, ServerMessage } from "./types";
+import { computed, ref, type Ref } from "vue";
+import { streamChat } from "../api/client";
+import { useHistory } from "./useHistory";
+import type { ChatMsg } from "./types";
 
-function fromServer(m: ServerMessage): ChatMsg {
-  let specLines: string[] = [];
-  if (m.spec_json) {
-    try {
-      specLines = JSON.parse(m.spec_json) as string[];
-    } catch {
-      specLines = [];
-    }
-  }
-  return { id: m.id, role: m.role, text: m.content_text, specLines };
-}
-
+/**
+ * 单一消息源：history 的 100 条滑动窗口 + 会话内新增的 live 尾巴。
+ * 两者拼接展示，互不覆盖（历史翻页不影响新消息，新消息不重置历史）。
+ */
 export function useChat(): {
   messages: Ref<ChatMsg[]>;
   streaming: Ref<boolean>;
   send: (text: string) => Promise<void>;
+  loadOlder: () => Promise<void>;
+  canLoadOlder: Ref<boolean>;
+  loadingOlder: Ref<boolean>;
 } {
-  const messages = ref<ChatMsg[]>([]);
+  const history = useHistory();
+  const liveTail = ref<ChatMsg[]>([]);
   const streaming = ref(false);
-  let historyLoaded = false;
 
-  void (async () => {
-    try {
-      const { items } = await getMessages({ limit: 100 });
-      // 仅在用户尚未发送消息时回填历史，避免竞态覆盖
-      if (!historyLoaded && messages.value.length === 0) {
-        messages.value = items.map(fromServer);
-      }
-    } catch {
-      // 历史加载失败：保持空，用户仍可发消息
-    }
-  })();
+  const messages = computed<ChatMsg[]>(() => [...history.window.value, ...liveTail.value]);
 
   async function send(text: string): Promise<void> {
     if (streaming.value) throw new Error("助手正在回复，请稍候");
     const trimmed = text.trim();
     if (!trimmed) return;
-    historyLoaded = true;
 
-    messages.value.push({ role: "user", text: trimmed, specLines: [] });
+    liveTail.value.push({ role: "user", text: trimmed, specLines: [] });
     const assistant: ChatMsg = { role: "assistant", text: "", specLines: [] };
-    messages.value.push(assistant);
+    liveTail.value.push(assistant);
     streaming.value = true;
 
     try {
@@ -61,5 +46,12 @@ export function useChat(): {
     }
   }
 
-  return { messages, streaming, send };
+  return {
+    messages,
+    streaming,
+    send,
+    loadOlder: history.loadOlder,
+    canLoadOlder: history.canLoadOlder,
+    loadingOlder: history.loading,
+  };
 }

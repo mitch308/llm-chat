@@ -1,19 +1,9 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
 import { useChat } from "./useChat";
-import MessageItem from "./MessageItem.vue";
+import MessageList from "./MessageList.vue";
 import ChatInput from "./ChatInput.vue";
 
-const { messages, streaming, send } = useChat();
-const scroller = ref<HTMLElement | null>(null);
-
-watch(
-  () => messages.value.map((m) => m.text.length + m.specLines.length).join(","),
-  async () => {
-    await nextTick();
-    scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
-  },
-);
+const { messages, streaming, send, loadOlder, loadingOlder } = useChat();
 </script>
 
 <template>
@@ -22,13 +12,7 @@ watch(
       <h1>llm-chat</h1>
       <span class="hint">记账 · 新闻 · 富界面对话</span>
     </header>
-    <div ref="scroller" class="chat-scroll">
-      <MessageItem
-        v-for="(m, i) in messages"
-        :key="m.id ?? `local-${i}`"
-        :msg="m"
-      />
-    </div>
+    <MessageList :messages="messages" :loading-older="loadingOlder" @load-older="loadOlder" />
     <ChatInput :disabled="streaming" @send="send" />
   </div>
 </template>
@@ -53,10 +37,5 @@ watch(
 .hint {
   font-size: 12px;
   color: #9ca3af;
-}
-.chat-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
 }
 </style>
