@@ -1,0 +1,8 @@
+{
+  "name": "llm-chat",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter @llm-chat/server --filter @llm-chat/web dev",
+    "test": "pnpm -r test"
+  }
+}
