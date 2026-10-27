@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { messagesRoutes } from "./messages/messages.routes";
 import { chatRoutes } from "./chat/chat.routes";
 import { billsRoutes } from "./bills/bills.routes";
+import { opsRoutes } from "./ops/ops.routes";
 import type { LLMClient } from "./chat/llm";
 
 export interface AppDeps {
@@ -16,6 +17,7 @@ export function createApp({ db, llm }: AppDeps): Express {
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", messagesRoutes(db));
   app.use("/api", billsRoutes(db));
+  app.use("/api", opsRoutes(db, llm));
   app.use("/api", chatRoutes(db, llm));
   return app;
 }
