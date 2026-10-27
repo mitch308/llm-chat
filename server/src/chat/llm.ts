@@ -40,6 +40,19 @@ export interface LLMClient {
 export const ZHIPU_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 export const ZHIPU_MODEL = "glm-5.3-flash";
 
+/** 大模型配置统一从 .env/环境变量读取（ZHIPU_API_KEY / ZHIPU_MODEL / ZHIPU_BASE_URL）。 */
+export function resolveLLMConfig(): {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+} {
+  return {
+    apiKey: process.env.ZHIPU_API_KEY ?? "",
+    model: process.env.ZHIPU_MODEL ?? ZHIPU_MODEL,
+    baseUrl: process.env.ZHIPU_BASE_URL ?? ZHIPU_BASE_URL,
+  };
+}
+
 /** 智谱兼容端点客户端：文本增量直通，tool_calls 累积后一次性吐出。 */
 export function createZhipuClient(opts: {
   apiKey: string;
@@ -47,11 +60,12 @@ export function createZhipuClient(opts: {
   model?: string;
 }): LLMClient {
   if (!opts.apiKey) throw new Error("ZHIPU_API_KEY missing");
+  const cfg = resolveLLMConfig();
   const client = new OpenAI({
     apiKey: opts.apiKey,
-    baseURL: opts.baseUrl ?? ZHIPU_BASE_URL,
+    baseURL: opts.baseUrl ?? cfg.baseUrl,
   });
-  const model = opts.model ?? ZHIPU_MODEL;
+  const model = opts.model ?? cfg.model;
 
   async function* stream(input: {
     system: string;
@@ -91,6 +105,11 @@ export function createZhipuClient(opts: {
   }
 
   return { stream };
+}
+
+/** 默认客户端：未注入时按 env 构造（无 key 抛 ZHIPU_API_KEY missing）。 */
+export function getDefaultLLMClient(): LLMClient {
+  return createZhipuClient({ apiKey: process.env.ZHIPU_API_KEY ?? "" });
 }
 
 /** 测试替身：每次 stream() 弹出一个脚本轮次。 */

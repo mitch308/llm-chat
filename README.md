@@ -21,15 +21,17 @@ pnpm install
 pnpm dev          # server(127.0.0.1:8787) + web(localhost:5173) 并行
 ```
 
-环境变量（server 读取，可放 `server/.env`）：
+环境变量（server 读取，放 `server/.env`——模板见 `server/.env.example`；Node 22 启动时自动加载）：
 
-| 变量 | 必需 | 说明 |
-|---|---|---|
-| `ZHIPU_API_KEY` | 是 | 智谱开放平台 API key（对话/俏皮话/新闻摘要） |
-| `GUARDIAN_API_KEY` | 否 | Guardian 开放平台 key，缺失时该新闻源禁用 |
-| `RSSHUB_BASE` | 否 | RSSHub 基地址（默认 `https://rsshub.app`；国内网络建议自托管后覆盖） |
-| `PORT` | 否 | 服务端口，默认 8787（仅监听 127.0.0.1） |
-| `DB_PATH` | 否 | SQLite 文件路径，默认 `server/data/llm-chat.db` |
+| 变量 | 必需 | 默认 | 说明 |
+|---|---|---|---|
+| `ZHIPU_API_KEY` | 是 | — | 智谱开放平台 API key（对话/俏皮话/新闻摘要） |
+| `ZHIPU_MODEL` | 否 | `glm-5.3-flash` | 大模型名 |
+| `ZHIPU_BASE_URL` | 否 | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容端点 |
+| `GUARDIAN_API_KEY` | 否 | — | Guardian 开放平台 key，缺失时该新闻源禁用 |
+| `RSSHUB_BASE` | 否 | `https://rsshub.app` | RSSHub 基地址（国内网络建议自托管后覆盖） |
+| `PORT` | 否 | `8787` | 服务端口（仅监听 127.0.0.1） |
+| `DB_PATH` | 否 | `server/data/llm-chat.db` | SQLite 文件路径 |
 
 测试（不依赖网络与真实 API key）：
 

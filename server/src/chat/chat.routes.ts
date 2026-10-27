@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { Router } from "express";
 import { runAgent } from "../agent/agent";
-import { createZhipuClient, type LLMClient } from "./llm";
+import { getDefaultLLMClient, type LLMClient } from "./llm";
 
 /** POST /api/chat {content} → SSE 流（text/spec/tool/done 事件）。 */
 export function chatRoutes(db: Database, llm?: LLMClient): Router {
@@ -16,7 +16,7 @@ export function chatRoutes(db: Database, llm?: LLMClient): Router {
 
     let client: LLMClient;
     try {
-      client = llm ?? createZhipuClient({ apiKey: process.env.ZHIPU_API_KEY ?? "" });
+      client = llm ?? getDefaultLLMClient();
     } catch {
       res
         .status(500)

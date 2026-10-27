@@ -3,7 +3,7 @@ import { Router } from "express";
 import type { Bill } from "../bills/bills.service";
 import { createOpsService, OpRunError } from "./ops.service";
 import { attachQuip, runBillAction, storeResult, type OpAction } from "./ops.executor";
-import { createZhipuClient, type LLMClient } from "../chat/llm";
+import { getDefaultLLMClient, type LLMClient } from "../chat/llm";
 
 /** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。 */
 export function opsRoutes(db: Database, llm?: LLMClient): Router {
@@ -79,7 +79,7 @@ export function opsRoutes(db: Database, llm?: LLMClient): Router {
 
       // executed：生成俏皮话并写回 result_json
       const data = outcome.data as { bill: Bill; deleted?: boolean };
-      const client = llm ?? createZhipuClient({ apiKey: process.env.ZHIPU_API_KEY ?? "" });
+      const client = llm ?? getDefaultLLMClient();
       const quip = await attachQuip(db, client, data.bill);
       storeResult(db, opId, { bill: data.bill, deleted: data.deleted }, quip);
       res.json({

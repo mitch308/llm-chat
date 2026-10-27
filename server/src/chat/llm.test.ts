@@ -1,5 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { createFakeLLM, createZhipuClient, type Delta } from "./llm";
+import {
+  createFakeLLM,
+  createZhipuClient,
+  resolveLLMConfig,
+  type Delta,
+} from "./llm";
+
+describe("resolveLLMConfig", () => {
+  it("reads key/model/baseUrl from env with spec defaults", () => {
+    const prev = { ...process.env };
+    process.env.ZHIPU_API_KEY = "sk-test";
+    process.env.ZHIPU_MODEL = "glm-4.7-flash";
+    process.env.ZHIPU_BASE_URL = "https://custom.example/v4";
+    try {
+      const cfg = resolveLLMConfig();
+      expect(cfg).toEqual({
+        apiKey: "sk-test",
+        model: "glm-4.7-flash",
+        baseUrl: "https://custom.example/v4",
+      });
+    } finally {
+      for (const k of ["ZHIPU_API_KEY", "ZHIPU_MODEL", "ZHIPU_BASE_URL"] as const) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k]!;
+      }
+    }
+  });
+
+  it("falls back to glm-5.3-flash and the zhipu endpoint", () => {
+    const prev = { ...process.env };
+    delete process.env.ZHIPU_API_KEY;
+    delete process.env.ZHIPU_MODEL;
+    delete process.env.ZHIPU_BASE_URL;
+    try {
+      const cfg = resolveLLMConfig();
+      expect(cfg.model).toBe("glm-5.3-flash");
+      expect(cfg.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
+      expect(cfg.apiKey).toBe("");
+    } finally {
+      for (const k of ["ZHIPU_API_KEY", "ZHIPU_MODEL", "ZHIPU_BASE_URL"] as const) {
+        if (prev[k] !== undefined) process.env[k] = prev[k]!;
+      }
+    }
+  });
+});
 
 describe("createFakeLLM", () => {
   it("replays scripted rounds per stream() call", async () => {
