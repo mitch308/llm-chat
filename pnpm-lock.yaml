@@ -10,6 +10,12 @@ importers:
 
   server:
     dependencies:
+      '@json-render/core':
+        specifier: ^0.21.3
+        version: 0.21.3(zod@4.6.7)
+      '@json-render/vue':
+        specifier: ^0.21.3
+        version: 0.21.3(vue@3.5.44(typescript@5.9.3))(zod@4.6.7)
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -18,7 +24,10 @@ importers:
         version: 5.3.0
       openai:
         specifier: ^7.45.0
-        version: 7.45.0(ws@8.22.0)
+        version: 7.45.0(ws@8.22.0)(zod@4.6.7)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^9.6.0
@@ -431,6 +440,17 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
+
+  '@json-render/core@0.21.3':
+    resolution: {integrity: sha512-sgzPtRhRB5wkhrbLtPm9bAhna5Q0x/U0vUpb3S/VEutouWEvvZRebHhpM5XiEjRM5Shv4W70VMZ8pGcGcz7j+A==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@json-render/vue@0.21.3':
+    resolution: {integrity: sha512-sluLaFlM+JmLd/WUDHDbHD/qcW8U1jxM4ttT74xXQarWr9QstCOeLNSgFQ9k3oXvj3clK1buDQy97EbUO9nIsg==}
+    peerDependencies:
+      vue: ^3.5.0
+      zod: ^4.0.0
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
@@ -1423,6 +1443,9 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
 
   '@asamuzakjp/css-color@3.2.0':
@@ -1623,6 +1646,16 @@ snapshots:
     optional: true
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
+
+  '@json-render/core@0.21.3(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
+
+  '@json-render/vue@0.21.3(vue@3.5.44(typescript@5.9.3))(zod@4.6.7)':
+    dependencies:
+      '@json-render/core': 0.21.3(zod@4.6.7)
+      vue: 3.5.44(typescript@5.9.3)
+      zod: 4.6.7
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
@@ -2307,9 +2340,10 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@7.45.0(ws@8.22.0):
+  openai@7.45.0(ws@8.22.0)(zod@4.6.7):
     optionalDependencies:
       ws: 8.22.0
+      zod: 4.6.7
 
   parse5@7.3.0:
     dependencies:
@@ -2665,3 +2699,5 @@ snapshots:
   xml-name-validator@5.0.0: {}
 
   xmlchars@2.2.0: {}
+
+  zod@4.6.7: {}

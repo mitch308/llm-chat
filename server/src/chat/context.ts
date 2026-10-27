@@ -1,6 +1,8 @@
 import type Database from "better-sqlite3";
 import type { ModelMsg } from "./llm";
 import { createMessagesService } from "../messages/messages.service";
+import { createOpsService } from "../ops/ops.service";
+import { CATALOG_PROMPT, SKILLS_PROMPT } from "../agent/prompts";
 
 const MAX_MESSAGES = 20;
 const MAX_CONTEXT_CHARS = 12000;
@@ -61,6 +63,12 @@ export function buildContext(db: Database): { system: string; messages: ModelMsg
     messages.shift();
   }
 
-  const system = PERSONA.replace("{{TODAY}}", todayInShanghai());
-  return { system, messages };
+  const system = PERSONA.replace("{{TODAY}}", todayInShanghai())
+    .replace("{{SKILLS}}", SKILLS_PROMPT)
+    .replace("{{CATALOG}}", CATALOG_PROMPT);
+
+  const pending = createOpsService(db).getPendingSummary();
+  const pendingLine = pending ? `\n\n当前待确认提议: ${pending}` : "";
+
+  return { system: system + pendingLine, messages };
 }

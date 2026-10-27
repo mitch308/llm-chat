@@ -53,7 +53,7 @@ describe("buildContext", () => {
     expect(assistant.content).not.toContain('"op":"add"');
   });
 
-  it("system contains Shanghai date/weekday and prompt placeholders", () => {
+  it("system contains Shanghai date/weekday and skills+catalog wiring anchors", () => {
     const { system } = buildContext(freshDb());
     const now = new Intl.DateTimeFormat("zh-CN", {
       timeZone: "Asia/Shanghai",
@@ -63,8 +63,9 @@ describe("buildContext", () => {
       weekday: "long",
     }).format(new Date());
     expect(system).toContain(now);
-    expect(system).toContain("{{SKILLS}}");
-    expect(system).toContain("{{CATALOG}}");
+    // Task 10 接线后：占位符已替换为 skills 与 catalog 提示词
+    expect(system).toContain("技能路由");
+    expect(system).toContain("OUTPUT FORMAT");
   });
 
   it("truncates oldest messages when context exceeds 12000 chars", () => {
