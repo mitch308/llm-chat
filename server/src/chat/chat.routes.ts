@@ -14,9 +14,15 @@ export function chatRoutes(db: Database, llm?: LLMClient): Router {
       return;
     }
 
-    const client =
-      llm ??
-      createZhipuClient({ apiKey: process.env.ZHIPU_API_KEY ?? "" });
+    let client: LLMClient;
+    try {
+      client = llm ?? createZhipuClient({ apiKey: process.env.ZHIPU_API_KEY ?? "" });
+    } catch {
+      res
+        .status(500)
+        .json({ code: "NO_API_KEY", message: "未配置 ZHIPU_API_KEY，无法对话" });
+      return;
+    }
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",

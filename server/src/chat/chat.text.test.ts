@@ -91,4 +91,19 @@ describe("POST /api/chat (text-only v1)", () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("BAD_REQUEST");
   });
+
+  it("returns readable JSON error when no API key is configured", async () => {
+    const prev = process.env.ZHIPU_API_KEY;
+    delete process.env.ZHIPU_API_KEY;
+    try {
+      const db = freshDb();
+      const app = createApp({ db }); // 无注入 llm → 真实客户端 → 无 key
+      const res = await request(app).post("/api/chat").send({ content: "hi" });
+      expect(res.status).toBe(500);
+      expect(res.body.code).toBe("NO_API_KEY");
+      expect(res.body.message).toContain("ZHIPU_API_KEY");
+    } finally {
+      if (prev !== undefined) process.env.ZHIPU_API_KEY = prev;
+    }
+  });
 });
