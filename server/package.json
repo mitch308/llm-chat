@@ -8,15 +8,16 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.3.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3"]
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0"
   }
 }
