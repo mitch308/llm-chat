@@ -41,8 +41,8 @@ export const SKILLS_PROMPT = `# 技能路由
 # 记账技能——修改/删除
 
 1. 调 query_bills 定位目标；0 笔 → 文字说明；多笔 → BillList 请用户指认
-2. 单笔 → 调 propose_op(kind="bill_update"/"bill_delete")，BillConfirmCard 用 diff 展示 变更前→变更后（删除则展示将删除的记录）
-3. 确认与幂等同记录流程
+2. 单笔 → 调 propose_op(kind="bill_update"/"bill_delete")，BillConfirmCard 必须带 kind="bill_update"/"bill_delete"（与提议一致），diff 展示 变更前→变更后（删除则展示将删除的记录）
+3. 确认与幂等同记录流程；确认按钮会按提议的 kind 执行，kind 不一致会被服务端拒绝
 
 # 新闻技能
 

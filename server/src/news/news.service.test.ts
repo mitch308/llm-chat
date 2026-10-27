@@ -242,6 +242,54 @@ describe("searchNews", () => {
     expect(tc.summary_zh).toBe("TechCrunch 简要内容。"); // description 也缺失 → 仅译题
   });
 
+  it("refreshing a cached foreign item preserves its Chinese title in FTS (I2)", async () => {
+    const c: Counters = { latest: {}, range: {} };
+    insertNews("techcrunch", "tc-1", "Some AI story", { title_zh: "人工智能报道" });
+    db.prepare(
+      `UPDATE news_items SET fetched_at = datetime('now', '-40 minutes') WHERE external_id = 'tc-1'`,
+    ).run();
+
+    const svc = createNewsService({
+      db,
+      llm: createFakeLLM([]),
+      fetchers: fakeFetchers(
+        {
+          techcrunch: [
+            { external_id: "tc-1", title: "Some AI story", url: "https://x/tc1", published_at: null, heat_score: 30 },
+          ],
+        },
+        c,
+      ),
+    });
+
+    // 刷新后再用中文关键词检索，仍应命中（FTS 的 title_zh 未被 REPLACE 抹掉）
+    const res = await svc.searchNews({ keywords: ["人工智能报道"], mode: "keyword" });
+    expect(res.items.map((i) => i.external_id)).toContain("tc-1");
+  });
+
+  it("keyword mode applies the from/to date range (I3)", async () => {
+    const c: Counters = { latest: {}, range: {} };
+    seedFreshCacheForAll();
+    db.prepare(`DELETE FROM news_items WHERE external_id LIKE 'fresh-%'`).run();
+    db.prepare(
+      `INSERT INTO news_items (source, external_id, title, url, published_at, heat_score, fetched_at)
+       VALUES ('xinhua','wk-old','上周的AI新闻','https://x/old','2026-10-20T08:00:00Z',10,datetime('now'))`,
+    ).run();
+    db.prepare(
+      `INSERT INTO news_items (source, external_id, title, url, published_at, heat_score, fetched_at)
+       VALUES ('xinhua','wk-new','今天的AI新闻','https://x/new','2026-10-26T08:00:00Z',10,datetime('now'))`,
+    ).run();
+
+    const svc = createNewsService({ db, fetchers: fakeFetchers({}, c) });
+    const res = await svc.searchNews({
+      keywords: ["AI"],
+      mode: "keyword",
+      from: "2026-10-25",
+      to: "2026-10-27",
+    });
+    expect(res.items.map((i) => i.external_id)).toEqual(["wk-new"]);
+  });
+
   it("LLM summary failure never blocks the search", async () => {
     const c: Counters = { latest: {}, range: {} };
     insertNews("hackernews", "hn-9", "Some AI thing");

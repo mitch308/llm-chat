@@ -108,6 +108,18 @@ export async function* runAgent(opts: {
   }
 
   async function executeTool(call: ToolCall): Promise<string> {
+    try {
+      return await executeToolInner(call);
+    } catch (err) {
+      // I1：执行异常回喂模型自查纠正，不击穿整轮对话
+      return JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : "工具执行失败",
+      });
+    }
+  }
+
+  async function executeToolInner(call: ToolCall): Promise<string> {
     let args: unknown;
     try {
       args = JSON.parse(call.arguments || "{}");

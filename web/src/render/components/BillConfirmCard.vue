@@ -31,13 +31,23 @@ const error = ref<string | null>(null);
 const busy = ref(false);
 
 onMounted(async () => {
-  // 历史重现：pending 卡片向服务端核对真实状态
+  // 历史重现：pending 卡片向服务端核对真实状态；executed 恢复 quip（I6）
   if (status.value === "pending") {
     try {
       const { items } = await getOps([props.op_id]);
-      const real = items[0] as { status?: string } | undefined;
+      const real = items[0] as
+        | { status?: string; result_json?: string | null }
+        | undefined;
       if (real?.status && real.status !== "pending") {
         status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
+        if (real.status === "executed" && real.result_json) {
+          try {
+            const parsed = JSON.parse(real.result_json) as { quip?: string | null };
+            if (parsed.quip) quip.value = parsed.quip;
+          } catch {
+            // result_json 解析失败：仅恢复状态
+          }
+        }
       }
     } catch {
       // 状态查询失败：保持本地态

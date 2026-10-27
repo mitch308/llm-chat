@@ -9,7 +9,13 @@ function submit() {
   const text = draft.value.trim();
   if (!text) return;
   emit("send", text);
-  draft.value =("");
+  draft.value = "";
+}
+
+function onEnter(e: KeyboardEvent) {
+  // I5：中文输入法组词态的 Enter（含 keyCode 229）只确认候选字，不发送
+  if (e.isComposing || e.keyCode === 229) return;
+  submit();
 }
 </script>
 
@@ -20,7 +26,7 @@ function submit() {
       :disabled="disabled"
       rows="2"
       placeholder="输入消息，Enter 发送 / Shift+Enter 换行"
-      @keydown.enter.exact.prevent="submit"
+      @keydown.enter.exact.prevent="onEnter"
     />
     <button :disabled="disabled || !draft.trim()" @click="submit">
       {{ disabled ? "回复中…" : "发送" }}

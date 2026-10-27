@@ -9,7 +9,8 @@ export function buildCatalog() {
       BillConfirmCard: {
         props: z.object({
           op_id: z.string(),
-          status: z.enum(["pending", "saved", "cancelled", "error"]),
+          kind: z.enum(["bill_create", "bill_update", "bill_delete"]).nullable(),
+          status: z.enum(["pending", "saved", "executed", "cancelled", "expired", "error"]),
           data: z.object({
             type: z.enum(["expense", "income"]),
             amount_yuan: z.number(),

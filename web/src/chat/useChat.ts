@@ -37,6 +37,9 @@ export function useChat(): {
           assistant.text += e.delta;
         } else if (e.type === "spec") {
           assistant.specLines.push(e.line);
+        } else if (e.type === "error") {
+          // I4：错误事件写入气泡，绝不静默吞掉
+          assistant.text += `${assistant.text ? "\n" : ""}⚠ 回复出错：${e.message}`;
         } else if (e.type === "done") {
           if (e.message) assistant.id = e.message.id;
         }

@@ -2,16 +2,18 @@
 import { nextTick, ref, watch } from "vue";
 import { useVirtualList } from "@vueuse/core";
 import type { ChatMsg } from "./types";
+import { estimateItemHeight } from "./heights";
 import MessageItem from "./MessageItem.vue";
 
 const props = defineProps<{ messages: ChatMsg[]; loadingOlder: boolean }>();
 const emit = defineEmits<{ (e: "load-older"): void }>();
 
 const containerRef = ref<HTMLElement | null>(null);
-const { list, containerProps, wrapperProps, scrollTo } = useVirtualList(
-  () => props.messages,
-  { itemHeight: 88, overscan: 8 },
-);
+const { list, containerProps, wrapperProps } = useVirtualList(() => props.messages, {
+  // I7：按内容估算高度，替代固定 88px（长文/卡片/图表差异巨大）
+  itemHeight: (index: number) => estimateItemHeight(props.messages[index] ?? { role: "user", text: "", specLines: [] }),
+  overscan: 8,
+});
 
 const atBottom = ref(true);
 const lastFirstKey = ref<string>("");

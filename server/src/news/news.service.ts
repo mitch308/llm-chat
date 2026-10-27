@@ -88,9 +88,11 @@ function upsert(db: Database, source: SourceId, raw: RawItem): void {
       .prepare(`SELECT id FROM news_items WHERE source=? AND external_id=?`)
       .get(source, raw.external_id) as { id: number } | undefined;
     if (row) {
+      // I2：REPLACE 时保留已翻译的 title_zh（刷新不抹除中文索引）
       db.prepare(
-        `INSERT OR REPLACE INTO news_fts(rowid, title, title_zh) VALUES (?, ?, NULL)`,
-      ).run(row.id, raw.title);
+        `INSERT OR REPLACE INTO news_fts(rowid, title, title_zh)
+         VALUES (?, ?, COALESCE((SELECT title_zh FROM news_items WHERE id = ?), NULL))`,
+      ).run(row.id, raw.title, row.id);
     }
   }
 }
@@ -244,41 +246,32 @@ export function createNewsService(deps: NewsServiceDeps) {
       }),
     );
 
-    // 检索
+    // 检索（keyword 模式同样应用日期区间，I3）
+    // Ruling: 关键词检索一律 LIKE——unicode61 把 CJK+拉丁混排标题切成整 token，
+    // MATCH 'AI' 命中不了"上周的AI新闻"；子串语义对中文正确，个人数据量 LIKE 足够。
     const limit = Math.min(q.limit ?? 20, 50);
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const fromOk = q.from && DATE_RE.test(q.from) ? q.from : null;
+    const toOk = q.to && DATE_RE.test(q.to) ? q.to : null;
+    const dateFilterSql = fromOk
+      ? toOk
+        ? ` AND (published_at IS NULL OR substr(published_at, 1, 10) BETWEEN '${fromOk}' AND '${toOk}')`
+        : ` AND (published_at IS NULL OR substr(published_at, 1, 10) >= '${fromOk}')`
+      : "";
     let rows: NewsItem[];
     if (q.mode === "keyword" && q.keywords.length > 0) {
-      const kws = q.keywords.map((k) => k.replace(/["'^]/g, "").trim()).filter(Boolean);
-      if (fts5()) {
-        // 自愈同步：绕过 upsert 的行（如测试直插）补进 FTS 索引
-        db.prepare(
-          `INSERT INTO news_fts(rowid, title, title_zh)
-           SELECT id, title, title_zh FROM news_items
-           WHERE id NOT IN (SELECT rowid FROM news_fts)`,
-        ).run();
-        const match = kws.join(" OR ");
-        let sql = `SELECT news_items.* FROM news_items JOIN news_fts ON news_items.id = news_fts.rowid WHERE news_fts MATCH ?`;
-        const params: unknown[] = [match];
-        if (q.source) {
-          sql += ` AND news_items.source = ?`;
-          params.push(q.source);
-        }
-        sql += ` ORDER BY news_items.published_at DESC LIMIT ?`;
-        params.push(limit);
-        rows = db.prepare(sql).all(...params) as NewsItem[];
-      } else {
-        const conds = kws.map(() => `(title LIKE ? OR title_zh LIKE ?)`).join(" OR ");
-        const params: unknown[] = [];
-        for (const k of kws) params.push(`%${k}%`, `%${k}%`);
-        let sql = `SELECT * FROM news_items WHERE (${conds})`;
-        if (q.source) {
-          sql += ` AND source = ?`;
-          params.push(q.source);
-        }
-        sql += ` ORDER BY published_at DESC LIMIT ?`;
-        params.push(limit);
-        rows = db.prepare(sql).all(...params) as NewsItem[];
+      const kws = q.keywords.map((k) => k.replace(/[%_]/g, "").trim()).filter(Boolean);
+      const conds = kws.map(() => `(title LIKE ? OR title_zh LIKE ?)`).join(" OR ");
+      const params: unknown[] = [];
+      for (const k of kws) params.push(`%${k}%`, `%${k}%`);
+      let sql = `SELECT * FROM news_items WHERE (${conds})`;
+      if (q.source) {
+        sql += ` AND source = ?`;
+        params.push(q.source);
       }
+      sql += `${dateFilterSql} ORDER BY published_at DESC LIMIT ?`;
+      params.push(limit);
+      rows = db.prepare(sql).all(...params) as NewsItem[];
     } else {
       let sql = `SELECT * FROM news_items`;
       const params: unknown[] = [];

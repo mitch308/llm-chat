@@ -64,6 +64,32 @@ describe("BillConfirmCard", () => {
     expect(w.find("button.confirm").exists()).toBe(false);
   });
 
+  it("restores saved state and quip from GET /ops on mount (I6)", async () => {
+    const { getOps } = await import("../../api/client");
+    vi.mocked(getOps).mockResolvedValue({
+      items: [
+        {
+          op_id: "op-1",
+          status: "executed",
+          result_json: JSON.stringify({
+            data: { bill: { id: 9 } },
+            quip: "这周第3件衣服👕",
+          }),
+        },
+      ],
+    } as never);
+
+    const w = mount(BillConfirmCard, { props: baseProps });
+    await flushPromises();
+
+    expect(w.text()).toContain("已保存");
+    expect(w.text()).toContain("这周第3件衣服👕");
+    expect(w.find("button.confirm").exists()).toBe(false);
+
+    // 还原 mock，避免泄漏到后续用例
+    vi.mocked(getOps).mockResolvedValue({ items: [] });
+  });
+
   it("executed 态只读显示 quip，无按钮", () => {
     const w = mount(BillConfirmCard, {
       props: { ...baseProps, status: "saved", quip: "记好啦" },

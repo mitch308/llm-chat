@@ -219,6 +219,36 @@ describe("runAgent", () => {
     expect(round2Seen).toBe(true);
   });
 
+  it("tool execution errors are fed back to the model instead of crashing (I1)", async () => {
+    let recovered = false;
+    const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [
+          {
+            type: "tool_calls",
+            calls: [
+              {
+                id: "c1",
+                name: "query_bills",
+                arguments: JSON.stringify({ category: "不存在的类目" }),
+              },
+            ],
+          },
+        ];
+      }
+      if (n === 1) {
+        recovered = true;
+        return [{ type: "text", delta: "换个说法再试\n" }];
+      }
+      return [];
+    });
+
+    const events = await collect(llm);
+    expect(events[0]).toEqual({ type: "tool", name: "query_bills" });
+    expect(recovered).toBe(true);
+    expect(events[events.length - 1].type).toBe("done");
+  });
+
   it("news flow: search_news tool → NewsList spec", async () => {
     const searched: unknown[] = [];
     const newsSearch = async (q: unknown) => {
@@ -281,5 +311,4 @@ describe("runAgent", () => {
     const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
     expect(specs.some((s) => s.line.includes("NewsList"))).toBe(true);
     expect(events[events.length - 1].type).toBe("done");
-  });
-});
+  });});

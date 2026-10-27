@@ -70,8 +70,23 @@ describe("useChat", () => {
     expect(messages.value[1].text).toBe("在的");
   });
 
-  it("disables sending while streaming", async () => {
-    let release!: () => void;
+  it("surface SSE error events into the assistant message (I4)", async () => {
+    vi.mocked(streamChat).mockImplementation(
+      async (_c: string, onEvent: (e: AgentEvent) => void) => {
+        onEvent({ type: "text", delta: "正在查" });
+        onEvent({ type: "error", message: "模型超时" });
+      },
+    );
+
+    const { messages, send } = useChat();
+    await send("查个东西");
+
+    const assistant = messages.value[1];
+    expect(assistant.text).toContain("正在查");
+    expect(assistant.text).toContain("模型超时");
+  });
+
+  it("disables sending while streaming", async () => {    let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     vi.mocked(streamChat).mockImplementation(
       async (_c: string, onEvent: (e: AgentEvent) => void) => {

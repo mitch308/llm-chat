@@ -132,6 +132,28 @@ describe("POST /api/actions/:name", () => {
     expect(resB.body.message).toContain("不存在的类目");
   });
 
+  it("rejects action name that mismatches the proposal kind (C1 guard)", async () => {
+    const catId = (db.prepare("SELECT id FROM categories WHERE name='三餐'").get() as { id: number }).id;
+    const created = db
+      .prepare(
+        `INSERT INTO bills (type, amount_cents, item, category_id, date) VALUES ('expense', 6800, '寿司', ?, '2026-10-27')`,
+      )
+      .run(catId);
+    const billId = Number(created.lastInsertRowid);
+
+    // 删除提议，却打 bill_create → 必须拒绝且不得新建
+    const del = createOpsService(db).proposeOp("bill_delete", { id: billId });
+    const res = await request(app).post("/api/actions/bill_create").send({ op_id: del.op_id });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("OP_KIND_MISMATCH");
+    expect(countBills()).toBe(1); // 原账单仍在，未误建
+
+    // 正确通道仍然工作
+    const ok = await request(app).post("/api/actions/bill_delete").send({ op_id: del.op_id });
+    expect(ok.status).toBe(200);
+    expect(countBills()).toBe(0);
+  });
+
   it("bill_update and bill_delete flow through actions", async () => {
     const catId = (db.prepare("SELECT id FROM categories WHERE name='三餐'").get() as { id: number }).id;
     const created = db

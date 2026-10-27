@@ -34,6 +34,20 @@ export function opsRoutes(db: Database, llm?: LLMClient): Router {
       return;
     }
 
+    // C1 双保险：动作名必须与提议的 kind 一致，杜绝"确认删除却新建"
+    const proposal = ops.getOps([opId])[0];
+    if (!proposal) {
+      res.status(409).json({ code: "OP_NOT_FOUND", message: "提议不存在" });
+      return;
+    }
+    if (name !== proposal.kind) {
+      res.status(409).json({
+        code: "OP_KIND_MISMATCH",
+        message: `动作类型不匹配：该提议为 ${proposal.kind}，收到 ${name}`,
+      });
+      return;
+    }
+
     try {
       const outcome = await ops.executeOp(opId, async (payload) =>
         runBillAction(db, name as OpAction, payload as Record<string, unknown>),
