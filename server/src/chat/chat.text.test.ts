@@ -72,7 +72,7 @@ describe("POST /api/chat (text-only v1)", () => {
     expect(textEvents.map((e) => e.delta).join("")).toBe("记好了");
     const done = events.find((e) => e.type === "done");
     expect(done).toBeDefined();
-    expect(typeof done.messageId).toBe("number");
+    expect(typeof (done as { message?: { id: number } }).message?.id).toBe("number");
 
     const svc = createMessagesService(db);
     const saved = svc.listMessages({ limit: 10 });
@@ -81,7 +81,7 @@ describe("POST /api/chat (text-only v1)", () => {
     expect(saved[1].content_text).toBe("今天买衣服花了200");
     expect(saved[0].role).toBe("assistant");
     expect(saved[0].content_text).toBe("记好了");
-    expect(saved[0].id).toBe(done.messageId);
+    expect(saved[0].id).toBe((done as { message: { id: number } }).message.id);
   });
 
   it("rejects empty content with 400", async () => {
