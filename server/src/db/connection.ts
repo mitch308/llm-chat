@@ -12,7 +12,8 @@ export const DEFAULT_DB_PATH = path.resolve(
   "../../data/llm-chat.db",
 );
 
-/** 按路径单例：建目录、建表、种子、FTS（不可用降级）。 */
+/** 按路径单例：建目录；建表（核心 DDL + 各 feature 经 ASM.ddl 贡献的表）；种子（ASM.seedFns）；
+ *  可选 DDL（ASM.ddlOptional，如 news 的 FTS5 虚表）逐条尝试，失败即降级 LIKE。 */
 export function getDb(dbPath?: string): Database.Database {
   const resolved = path.resolve(dbPath ?? DEFAULT_DB_PATH);
   const existing = instances.get(resolved);

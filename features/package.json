@@ -21,6 +21,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.1",
     "@vue/test-utils": "^2.5.1",
     "supertest": "^7.3.1",
     "typescript": "^5.7.0",
