@@ -19,6 +19,7 @@ web (Vue3+TS)  ── HTTP/SSE ──  server (Node+TS 单服务)
 ```bash
 pnpm install
 pnpm dev          # server(127.0.0.1:8787) + web(localhost:5173) 并行
+pnpm db:rebuild   # 删库重建（schema + 类目种子；dev server 需先停）
 ```
 
 环境变量（server 读取，放 `server/.env`——模板见 `server/.env.example`；Node 22 启动时自动加载）：

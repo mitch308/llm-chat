@@ -31,7 +31,7 @@ pnpm --filter @llm-chat/server test
 - **写操作必须走提议生命周期**（`ops/ops.service.ts`）：服务端发 op_id、全局最多 1 个 pending、TTL 10 分钟、executed 幂等重放。动作路由有 kind 一致性守卫（`POST /api/actions/:name` 的 name 必须等于提议的 kind，否则 409 OP_KIND_MISMATCH）——别绕过。
 - **新闻关键词检索刻意用 LIKE，不用 FTS MATCH**：FTS5 unicode61 把 CJK+拉丁混排标题（"上周的AI新闻"）切成单一 token，`MATCH 'AI'` 命中不了。`news_fts` 表存在但检索路径不用它；要换就上 trigram 分词器并重写测试。
 - 账单金额库内一律 `amount_cents` 整数；类目两级（`db/seeds.ts`），bills 必须挂**叶子**类目；父类名查询在 `bills.service.ts` 展开为全部子类。
-- DB 无迁移系统：`db/schema.ts` 是 `CREATE TABLE IF NOT EXISTS` 顺序执行。改列 = 改 DDL + 删 `server/data/llm-chat.db` 重建（开发期可接受）。
+- DB 无迁移系统：`db/schema.ts` 是 `CREATE TABLE IF NOT EXISTS` 顺序执行。改列 = 改 DDL + `pnpm db:rebuild` 删库重建（开发期可接受；实现在 `db/rebuild.ts` + `scripts/rebuild-db.ts`）。
 - 中文输入法：`ChatInput.vue` 的 Enter 有 `isComposing/keyCode 229` 守卫，改动输入逻辑时别丢。
 
 ## 文档优先级
