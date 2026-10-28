@@ -77,7 +77,8 @@ export function createOpsService(
   );
   const getById = db.prepare(`SELECT * FROM op_proposals WHERE op_id = ?`);
   const supersedePending = db.prepare(
-    `UPDATE op_proposals SET status = 'expired' WHERE status = 'pending'`,
+    // 用户切换到新账单 = 放弃当前确认，旧 pending 标记 cancelled（而非 expired）
+    `UPDATE op_proposals SET status = 'cancelled' WHERE status = 'pending'`,
   );
   const markFinal = db.prepare(
     `UPDATE op_proposals SET status = ?, result_json = ?, executed_at = ?

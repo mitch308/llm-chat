@@ -93,11 +93,11 @@ describe("op proposal lifecycle", () => {
     expect(s.getRecentOpsSummary()[0].status).toBe("expired");
   });
 
-  it("new proposal supersedes the pending one", async () => {
+  it("new proposal supersedes the pending one as CANCELLED (用户切换账单=放弃确认)", async () => {
     const s = svc();
     const a = s.proposeOp("bill_create", { item: "a" });
     const b = s.proposeOp("bill_create", { item: "b" });
-    expect(s.getOps([a.op_id])[0].status).toBe("expired");
+    expect(s.getOps([a.op_id])[0].status).toBe("cancelled");
     expect(s.getOps([b.op_id])[0].status).toBe("pending");
 
     const outcome = await s.executeOp(b.op_id, async () => ({ ok: true, data: {} }));

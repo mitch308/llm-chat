@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createMessagesService } from "../messages/messages.service";
+import { createOpsService } from "../ops/ops.service";
 import type { Delta, LLMClient } from "../chat/llm";
 import { runAgent, type AgentEvent } from "./agent";
 
@@ -197,6 +198,132 @@ describe("runAgent", () => {
     // 三段近似重复的叙述折叠成一份：关键短语只出现一次，卡片 spec 完整保留
     expect(assistant.content_text.match(/请确认是否保存/g) ?? []).toHaveLength(1);
     expect(assistant.spec_json).toBeTruthy();
+  });
+
+  it("转向其他任务时，启动时已 pending 的提议自动取消（回归：卡片滞留 pending）", async () => {
+    // 上一轮遗留的 pending 提议
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 400,
+      item: "停车费",
+      category: "停车",
+      date: "2026-10-27",
+    });
+
+    // 本轮只查新闻，没确认也没提议 → 用户已"切换任务"
+    const llm = lazyLLM((n) =>
+      n === 0 ? [{ type: "text", delta: "今天的头条是……" }] : [],
+    );
+    await collect(llm);
+
+    const status = db
+      .prepare("SELECT status FROM op_proposals WHERE op_id = ?")
+      .get(seed.op_id) as { status: string };
+    expect(status.status).toBe("cancelled");
+  });
+
+  it("确认轮（execute_op）不触发自动取消", async () => {
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 400,
+      item: "停车费",
+      category: "停车",
+      date: "2026-10-27",
+    });
+
+    const llm = lazyLLM((n) =>
+      n === 0
+        ? [
+            {
+              type: "tool_calls",
+              calls: [
+                { id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: seed.op_id }) },
+              ],
+            },
+          ]
+        : [{ type: "text", delta: "已保存" }],
+    );
+    await collect(llm);
+
+    const status = db
+      .prepare("SELECT status FROM op_proposals WHERE op_id = ?")
+      .get(seed.op_id) as { status: string };
+    expect(status.status).toBe("executed");
+  });
+
+  it("execute_op 失败也不自动取消（保留重试机会）", async () => {
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 400,
+      item: "停车费",
+      category: "停车",
+      date: "2026-10-27",
+    });
+
+    // 模型拿错 op_id：执行失败，但本轮已尝试确认 → 不取消
+    const llm = lazyLLM((n) =>
+      n === 0
+        ? [
+            {
+              type: "tool_calls",
+              calls: [
+                { id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: "wrong" }) },
+              ],
+            },
+          ]
+        : [{ type: "text", delta: "稍等，我再试一次" }],
+    );
+    await collect(llm);
+
+    const status = db
+      .prepare("SELECT status FROM op_proposals WHERE op_id = ?")
+      .get(seed.op_id) as { status: string };
+    expect(status.status).toBe("pending");
+  });
+
+  it("本轮新建的提议不误伤（旧提议被取消，新提议保持 pending）", async () => {
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 3,
+      item: "早饭",
+      category: "三餐",
+      date: "2026-10-28",
+    });
+
+    // 用户没确认早饭，转而记停车费
+    const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [
+          {
+            type: "tool_calls",
+            calls: [
+              {
+                id: "c1",
+                name: "propose_op",
+                arguments: JSON.stringify({
+                  kind: "bill_create",
+                  payload: { type: "expense", amount_yuan: 400, item: "停车费", category: "停车", date: "2026-10-27" },
+                }),
+              },
+            ],
+          },
+        ];
+      }
+      if (n === 1) {
+        const op = pendingOp()!;
+        return [
+          { type: "text", delta: "好的，请确认：\n```spec\n" },
+          {
+            type: "text",
+            delta: `{"op":"add","path":"/root","value":"card-1"}\n{"op":"add","path":"/elements/card-1","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
+          },
+          { type: "text", delta: "```\n" },
+        ];
+      }
+      return [];
+    });
+    await collect(llm);
+
+    const old = db.prepare("SELECT status FROM op_proposals WHERE op_id = ?").get(seed.op_id) as { status: string };
+    const rows = db.prepare("SELECT status FROM op_proposals").all() as { status: string }[];
+    expect(old.status).toBe("cancelled");
+    expect(rows.filter((r) => r.status === "pending")).toHaveLength(1);
   });
 
   it("spec line split across text deltas within a round stays intact", async () => {    const llm = lazyLLM((n) => {

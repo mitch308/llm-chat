@@ -148,6 +148,14 @@ export async function* runAgent(opts: {
     opts.newsSearch ??
     createNewsService({ db, llm, fetchers: buildSourceFetchers() }).searchNews;
 
+  // 回合级自动取消：启动时已存在的 pending 提议，若本轮既未确认（尝试过但失败不算）
+  // 也未被新建提议取代 → 用户已转向其他任务，回合结束自动取消（卡片经对账信号翻转）
+  const startPendingId = ops
+    .getRecentOpsSummary(5)
+    .find((o) => o.status === "pending")?.op_id;
+  const createdOpIds = new Set<string>();
+  let attemptedExecute = false;
+
   messages.appendMessage({ role: "user", contentText: content });
   const { system, messages: history } = buildContext(db);
 
@@ -246,6 +254,7 @@ export async function* runAgent(opts: {
               o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(p.payload),
           );
         if (existing) {
+          createdOpIds.add(existing.op_id);
           return JSON.stringify({
             ok: true,
             duplicate: true,
@@ -256,6 +265,7 @@ export async function* runAgent(opts: {
           });
         }
         const proposal = ops.proposeOp(p.kind, p.payload);
+        createdOpIds.add(proposal.op_id);
         return JSON.stringify({
           ok: true,
           op_id: proposal.op_id,
@@ -265,6 +275,7 @@ export async function* runAgent(opts: {
         });
       }
       case "execute_op": {
+        attemptedExecute = true;
         const p = a as unknown as { op_id: string };
         const proposal = ops.getOps([p.op_id])[0];
         if (!proposal) return JSON.stringify({ ok: false, error: "提议不存在" });
@@ -369,5 +380,18 @@ export async function* runAgent(opts: {
 
   if (!cancelled) {
     yield { type: "done", message: finalMessage };
+  }
+
+  // 用户切换任务：启动时的 pending 提议本轮未被确认/取代/尝试确认 → 自动取消
+  if (
+    !cancelled &&
+    startPendingId &&
+    !attemptedExecute &&
+    !createdOpIds.has(startPendingId)
+  ) {
+    const stillPending = ops.getOps([startPendingId])[0];
+    if (stillPending && stillPending.status === "pending") {
+      ops.cancelOp(startPendingId);
+    }
   }
 }

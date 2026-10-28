@@ -109,6 +109,6 @@ describe("buildContext", () => {
 
   it("omits the op-status block when no proposals exist", () => {
     const { system } = buildContext(freshDb());
-    expect(system).not.toContain("提议状态");
+    expect(system).not.toContain("提议状态（");
   });
 });

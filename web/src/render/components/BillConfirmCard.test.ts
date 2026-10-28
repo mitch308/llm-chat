@@ -170,4 +170,22 @@ describe("BillConfirmCard", () => {
     expect(w.find("button.confirm").exists()).toBe(true);
     expect(getOps).toHaveBeenCalledTimes(1);
   });
+
+  it("对账发现已取消（如用户转向其他任务被自动取消）→ 显示已取消", async () => {
+    vi.mocked(getOps).mockResolvedValue({ items: [] });
+    const version = ref(0);
+    const w = mount(BillConfirmCard, {
+      props: baseProps,
+      global: { provide: { [OpsSyncKey]: version } },
+    });
+    await flushPromises();
+    vi.mocked(getOps).mockResolvedValue({
+      items: [{ status: "cancelled", result_json: null }],
+    });
+    version.value += 1;
+    await flushPromises();
+
+    expect(w.find("button.confirm").exists()).toBe(false);
+    expect(w.text()).toContain("已取消");
+  });
 });
