@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * bills 组件/动作清单（与 web/src/render/registry.ts 一一对应）。
+ * bills 组件/动作清单（web 注册见 features/bills/web/index.ts，与本清单一一对应）。
  * Props zod 自原 server/src/agent/catalog.ts 逐字迁移；本文件保持 node-safe（仅 zod）。
  */
 export const BILL_COMPONENTS = ["BillConfirmCard", "BillList", "BillItem"] as const;

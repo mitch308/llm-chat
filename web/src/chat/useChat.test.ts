@@ -5,6 +5,10 @@ import type { AgentEvent } from "./types";
 vi.mock("../api/client", () => ({
   streamChat: vi.fn(),
   getMessages: vi.fn().mockResolvedValue({ items: [] }),
+}));
+
+// postAction/getOps 已收编 features/kernel/web.ts（本用例图不直接使用，占位防漏网）
+vi.mock("@llm-chat/features/web", () => ({
   postAction: vi.fn(),
   getOps: vi.fn(),
 }));

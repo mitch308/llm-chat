@@ -1,30 +1,8 @@
-import { h, type Component } from "vue";
-import { defineRegistry } from "@json-render/vue";
-import BillConfirmCard from "./components/BillConfirmCard.vue";
-import BillList from "./components/BillList.vue";
-import BillItem from "./components/BillItem.vue";
-import Metric from "./components/Metric.vue";
-import StatChart from "./components/StatChart.vue";
-import NewsList from "./components/NewsList.vue";
-import NewsItem from "./components/NewsItem.vue";
-import EmptyState from "./components/EmptyState.vue";
-import ErrorState from "./components/ErrorState.vue";
+import { assembleWebRegistry } from "@llm-chat/features/web";
 
-type Ctx = { props: Record<string, unknown> };
+/** catalog 定义在 server（feature 贡献组装）；web 侧按 features/<name>/web/index.ts
+ *  约定 glob 收集 feature 的 default 导出并组装 类型→组件 映射（懒加载）。 */
+const mods = import.meta.glob("../../../features/*/web/index.ts");
 
-/** catalog 定义在 server（catalog.prompt 用）；web 侧仅做 类型→组件 映射。 */
-const built = defineRegistry({ data: {} } as never, {
-  components: {
-    BillConfirmCard: (ctx: Ctx) => h(BillConfirmCard, ctx.props),
-    BillList: (ctx: Ctx) => h(BillList, ctx.props),
-    BillItem: (ctx: Ctx) => h(BillItem, ctx.props),
-    Metric: (ctx: Ctx) => h(Metric, ctx.props),
-    StatChart: (ctx: Ctx) => h(StatChart, ctx.props),
-    NewsList: (ctx: Ctx) => h(NewsList, ctx.props),
-    NewsItem: (ctx: Ctx) => h(NewsItem, ctx.props),
-    EmptyState: (ctx: Ctx) => h(EmptyState, ctx.props),
-    ErrorState: (ctx: Ctx) => h(ErrorState, ctx.props),
-  },
-});
-
-export const registry = built.registry as unknown as Record<string, Component>;
+// TLA：assembleWebRegistry 需先 await 各 feature 模块；排除 /kernel/ 由组装器负责
+export const registry = await assembleWebRegistry(mods);

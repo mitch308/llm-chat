@@ -3,6 +3,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 vi.mock("../api/client", () => ({
   getMessages: vi.fn(),
   streamChat: vi.fn(),
+}));
+
+// postAction/getOps 已收编 features/kernel/web.ts（本用例图不直接使用，占位防漏网）
+vi.mock("@llm-chat/features/web", () => ({
   postAction: vi.fn(),
   getOps: vi.fn(),
 }));
