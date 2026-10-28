@@ -3,6 +3,7 @@ import {
   createFakeLLM,
   createZhipuClient,
   resolveLLMConfig,
+  toWireMessages,
   type Delta,
 } from "./llm";
 
@@ -96,5 +97,48 @@ describe("createFakeLLM", () => {
 describe("createZhipuClient", () => {
   it("throws ZHIPU_API_KEY missing without a key (no network)", () => {
     expect(() => createZhipuClient({ apiKey: "" })).toThrow("ZHIPU_API_KEY missing");
+  });
+});
+
+describe("toWireMessages", () => {
+  it("expands flat internal tool_calls to OpenAI wire format (type + function nesting)", () => {
+    const wire = toWireMessages([
+      { role: "user", content: "记一笔午饭 20 元" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "c1", name: "propose_op", arguments: '{"kind":"bill_create"}' },
+        ],
+      },
+      { role: "tool", content: '{"ok":true}', tool_call_id: "c1" },
+    ]);
+    expect(wire).toEqual([
+      { role: "user", content: "记一笔午饭 20 元" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "propose_op", arguments: '{"kind":"bill_create"}' },
+          },
+        ],
+      },
+      { role: "tool", content: '{"ok":true}', tool_call_id: "c1" },
+    ]);
+  });
+
+  it("passes through plain user/assistant messages unchanged", () => {
+    expect(
+      toWireMessages([
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "你好" },
+      ]),
+    ).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "你好" },
+    ]);
   });
 });

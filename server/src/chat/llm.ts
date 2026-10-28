@@ -53,6 +53,35 @@ export function resolveLLMConfig(): {
   };
 }
 
+/** 内部 ModelMsg → OpenAI 兼容 wire 格式。
+ *  assistant.tool_calls 内部为扁平 {id,name,arguments}，上送必须展开为
+ *  {id, type:"function", function:{name,arguments}}，否则智谱返回 400 工具类型不能为空。 */
+export function toWireMessages(
+  messages: ModelMsg[],
+): OpenAI.ChatCompletionMessageParam[] {
+  return messages.map((m) => {
+    if (m.role === "assistant" && m.tool_calls) {
+      return {
+        role: "assistant" as const,
+        content: m.content,
+        tool_calls: m.tool_calls.map((c) => ({
+          id: c.id,
+          type: "function" as const,
+          function: { name: c.name, arguments: c.arguments },
+        })),
+      };
+    }
+    if (m.role === "tool") {
+      return {
+        role: "tool" as const,
+        content: m.content,
+        tool_call_id: m.tool_call_id ?? "",
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+}
+
 /** 智谱兼容端点客户端：文本增量直通，tool_calls 累积后一次性吐出。 */
 export function createZhipuClient(opts: {
   apiKey: string;
@@ -77,7 +106,7 @@ export function createZhipuClient(opts: {
       stream: true,
       messages: [
         { role: "system", content: input.system },
-        ...input.messages.map((m) => ({ ...m }) as OpenAI.ChatCompletionMessageParam),
+        ...toWireMessages(input.messages),
       ],
       ...(input.tools.length > 0 ? { tools: input.tools as never } : {}),
     });
