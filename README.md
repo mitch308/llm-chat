@@ -22,6 +22,8 @@ pnpm dev          # server(127.0.0.1:8787) + web(localhost:5173) 并行
 pnpm db:rebuild   # 删库重建（schema + 类目种子；dev server 需先停）
 ```
 
+> 变更后需 `pnpm db:rebuild`（原因：kind 列 CHECK 移除，旧开发库插入非 bill kind 会失败）。
+
 环境变量（server 读取，放 `server/.env`——模板见 `server/.env.example`；Node 22 启动时自动加载）：
 
 | 变量 | 必需 | 默认 | 说明 |

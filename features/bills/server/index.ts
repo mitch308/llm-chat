@@ -3,6 +3,7 @@ import { defineServerFeature } from "@llm-chat/features/server";
 import { seedCategories } from "./seeds";
 import { billsRoutes } from "./bills.routes";
 import { billsStatsTool, queryBillsTool } from "./tools";
+import { billOpHandler } from "./bill-ops";
 import {
   BILL_ACTIONS,
   BILL_COMPONENTS,
@@ -116,4 +117,9 @@ export default defineServerFeature("bills", (ctx) => {
     execute: billsStatsTool.execute,
   });
   ctx.route((db) => billsRoutes(db));
+
+  // 写操作提议：三个 bill kind 各注册一个 OpHandler（按 kind 闭包分发到 runBillAction 分支）
+  for (const kind of BILL_ACTIONS) {
+    ctx.ops([kind], billOpHandler(kind));
+  }
 });

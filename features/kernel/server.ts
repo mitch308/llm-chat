@@ -68,7 +68,7 @@ export interface OpHandler {
     env: ToolEnv,
   ): Promise<RunResult> | RunResult;
   afterExecute?(env: ToolEnv & { opId: string }, data: object): void; // 写结果 + quip 等后置
-  cardHint?: string; // propose_op 成功后回喂的 spec 卡片指令
+  cardHint?: { created: string; duplicate: string }; // propose_op 新建/重复提议两条回喂的 spec 卡片指令
 }
 
 export interface CatalogComponentDef {

@@ -11,7 +11,7 @@ export const DDL: string[] = [
 
   `CREATE TABLE IF NOT EXISTS op_proposals (
     op_id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bill_create','bill_update','bill_delete')),
+    kind TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','executed','cancelled','expired')),
     result_json TEXT,

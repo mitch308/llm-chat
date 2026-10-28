@@ -5,13 +5,6 @@ import { createMessagesService } from "../messages/messages.service";
 import { buildContext } from "../chat/context";
 import { createSpecSplitter } from "../chat/streamSplitter";
 import { createOpsService } from "../ops/ops.service";
-import {
-  attachQuipInBackground,
-  runBillAction,
-  storeResult,
-  type Bill,
-  type OpAction,
-} from "../ops/ops.executor";
 import { ASM } from "../features";
 import type { ToolEntry } from "@llm-chat/features/server";
 
@@ -84,8 +77,9 @@ function collapseRepeatedRounds(
   return parts.filter((p) => !dropped.has(p.round)).map((p) => p.delta).join("");
 }
 
-/** 内核 op 工具定义（propose_op/execute_op）：ops 是核心设施，Task 7 迁入注册表前
- *  由 agent 内置 case 分发。def 自原 server/src/agent/tools.ts TOOL_DEFS 逐字迁移。 */
+/** 内核 op 工具定义（propose_op/execute_op）：ops 是核心设施，工具本身内置 agent，
+ *  但 kind 清单与 payload 校验/执行体均来自注册表（ASM.ops，feature 贡献）。
+ *  def 自原 server/src/agent/tools.ts TOOL_DEFS 逐字迁移，kind enum 改按注册表派生。 */
 const OP_TOOL_DEFS: ToolDef[] = [
   {
     type: "function",
@@ -96,7 +90,7 @@ const OP_TOOL_DEFS: ToolDef[] = [
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["bill_create", "bill_update", "bill_delete"] },
+          kind: { type: "string", enum: [...ASM.ops.keys()] },
           payload: {
             type: "object",
             properties: {
@@ -132,22 +126,14 @@ const OP_TOOL_DEFS: ToolDef[] = [
   },
 ];
 
-/** 内核 op 工具入参 schema（zod）：失败回喂错误让模型重试（propose_op 的重构见 Task 7）。 */
+/** 工具入参 schema（zod）：内核 op 工具用内置 schema，feature 工具查注册表。
+ *  propose_op 只校验信封（kind 为自由字符串，注册表 ASM.ops 为权威）；
+ *  payload 按 kind 对应 OpHandler.argPayload 在 case 内校验。 */
 const argSchemas = {
   propose_op: z
     .object({
-      kind: z.enum(["bill_create", "bill_update", "bill_delete"]),
-      payload: z
-        .object({
-          type: z.enum(["expense", "income"]).optional(),
-          amount_yuan: z.number().positive(),
-          item: z.string().min(1),
-          category: z.string().min(1),
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          note: z.string().optional(),
-          id: z.number().int().optional(),
-        })
-        .passthrough(),
+      kind: z.string().min(1),
+      payload: z.object({}).passthrough(),
     })
     .strict(),
   execute_op: z.object({ op_id: z.string().min(1) }).strict(),
@@ -246,7 +232,26 @@ export async function* runAgent(opts: {
     const a = args as Record<string, unknown>;
     switch (call.name) {
       case "propose_op": {
-        const p = a as unknown as { kind: OpAction; payload: Record<string, unknown> };
+        const p = a as unknown as { kind: string; payload: Record<string, unknown> };
+        // kind 为注册表键（ASM.ops，feature 贡献）：未知 kind 直接回喂可读错误
+        const handler = ASM.ops.get(p.kind);
+        if (!handler) {
+          return JSON.stringify({ ok: false, error: `未知提议类型: ${p.kind}` });
+        }
+        // payload 按 kind 对应的 argPayload 校验（失败回喂重试，与信封校验同一语义）
+        const parsed = handler.argPayload.safeParse(p.payload);
+        if (!parsed.success) {
+          const used = (retries.get(call.name) ?? 0) + 1;
+          retries.set(call.name, used);
+          if (used > MAX_TOOL_RETRIES) {
+            return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
+          }
+          return JSON.stringify({
+            ok: false,
+            error: `入参不合法: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+          });
+        }
+        const payload = parsed.data as Record<string, unknown>;
         // 工具循环防护：模型不稳定时会反复 propose 相同内容（每轮开场白被跨轮累积成复读文本，
         // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之，
         // 并用强指令把模型拉回「输出 spec 卡片」这一步。
@@ -254,7 +259,7 @@ export async function* runAgent(opts: {
           .getRecentOpsSummary(10)
           .find(
             (o) =>
-              o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(p.payload),
+              o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(payload),
           );
         if (existing) {
           createdOpIds.add(existing.op_id);
@@ -263,18 +268,18 @@ export async function* runAgent(opts: {
             duplicate: true,
             op_id: existing.op_id,
             kind: p.kind,
-            payload: p.payload,
-            hint: "该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status=\"pending\"，然后正常结束。",
+            payload,
+            hint: handler.cardHint?.duplicate,
           });
         }
-        const proposal = ops.proposeOp(p.kind, p.payload);
+        const proposal = ops.proposeOp(p.kind, payload);
         createdOpIds.add(proposal.op_id);
         return JSON.stringify({
           ok: true,
           op_id: proposal.op_id,
           kind: proposal.kind,
-          payload: p.payload,
-          hint: "提议已创建。立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素（props 含上述 op_id 与 status=\"pending\"），不要再调用任何工具。",
+          payload,
+          hint: handler.cardHint?.created,
         });
       }
       case "execute_op": {
@@ -282,18 +287,21 @@ export async function* runAgent(opts: {
         const p = a as unknown as { op_id: string };
         const proposal = ops.getOps([p.op_id])[0];
         if (!proposal) return JSON.stringify({ ok: false, error: "提议不存在" });
+        const handler = ASM.ops.get(proposal.kind);
+        if (!handler) {
+          return JSON.stringify({ ok: false, error: `未知提议类型: ${proposal.kind}` });
+        }
         try {
           const outcome = await ops.executeOp(p.op_id, async (payload) =>
-            runBillAction(db, proposal.kind, payload as Record<string, unknown>),
+            handler.execute(payload as Record<string, unknown>, { db, llm }),
           );
           if (outcome.status === "invalid") {
             return JSON.stringify({ ok: false, error: outcome.message });
           }
-          const data = outcome.data as { bill: Bill; deleted?: boolean };
-          // quip 转后台生成补写，工具立即返回（不拖慢回合与卡片对账信号）
-          storeResult(db, p.op_id, { bill: data.bill, deleted: data.deleted }, null);
-          attachQuipInBackground(db, llm, p.op_id, data.bill);
-          return JSON.stringify({ ok: true, status: outcome.status, bill: data.bill });
+          const data = outcome.data as Record<string, unknown>;
+          // handler 后置（写结果 + quip 转后台生成补写），工具立即返回（不拖慢回合与卡片对账信号）
+          handler.afterExecute?.({ db, llm, opId: p.op_id }, data);
+          return JSON.stringify({ ok: true, status: outcome.status, ...data });
         } catch (err) {
           return JSON.stringify({
             ok: false,

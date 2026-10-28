@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 
-export type OpKind = "bill_create" | "bill_update" | "bill_delete";
+/** kind 泛化为自由字符串（注册表 ASM.ops 为权威；DDL 已放开 kind 列 CHECK）。 */
+export type OpKind = string;
 export type OpStatus = "pending" | "executed" | "cancelled" | "expired";
 
 export interface OpProposal {

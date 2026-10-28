@@ -57,7 +57,8 @@ function pendingOp(): { op_id: string; payload_json: string } | undefined {
  *  入参→查询的映射与回喂 JSON 形状照抄真实执行体，fake 只接管检索本身。 */
 function withSearchNews(fake: (q: unknown) => Promise<unknown>): Map<string, ToolEntry> {
   const tools = new Map(ASM.tools);
-  const entry = tools.get("search_news")!;
+  const entry = tools.get("search_news");
+  if (!entry) throw new Error("ASM.tools 缺少 search_news（feature 装配异常，检查 features/news 注册）");
   tools.set("search_news", {
     ...entry,
     execute: async (args) => {
@@ -152,6 +153,48 @@ describe("runAgent", () => {
     const parsed = JSON.parse(assistant.spec_json!) as string[];
     expect(parsed).toHaveLength(2);
     expect(assistant.content_text).toContain("帮你记一笔");
+  });
+
+  it("propose_op 未知 kind → ok:false 未知提议类型，且不落提议（Review Focus 3）", async () => {
+    let fedToolResult = "";
+    const llm: LLMClient = {
+      async *stream(input) {
+        const toolMsg = input.messages.find((m) => m.role === "tool");
+        if (toolMsg) {
+          fedToolResult = toolMsg.content;
+          yield { type: "text", delta: "抱歉，我不该乱调工具" };
+          return;
+        }
+        yield {
+          type: "tool_calls",
+          calls: [
+            {
+              id: "c1",
+              name: "propose_op",
+              arguments: JSON.stringify({
+                kind: "unknown_kind",
+                payload: {
+                  type: "expense",
+                  amount_yuan: 200,
+                  item: "衣服",
+                  category: "衣服",
+                  date: "2026-10-27",
+                },
+              }),
+            },
+          ],
+        };
+      },
+    };
+
+    await collect(llm);
+
+    expect(JSON.parse(fedToolResult)).toEqual({
+      ok: false,
+      error: "未知提议类型: unknown_kind",
+    });
+    const n = (db.prepare("SELECT COUNT(*) AS n FROM op_proposals").get() as { n: number }).n;
+    expect(n).toBe(0);
   });
 
   it("propose_op 重复调用（同 kind+payload）不新建提议，复用既有 pending op_id（回归：工具循环）", async () => {
@@ -551,6 +594,24 @@ describe("runAgent", () => {
     const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
     expect(specs.some((s) => s.line.includes("NewsList"))).toBe(true);
     expect(events[events.length - 1].type).toBe("done");
+  });
+
+  it("模型可见工具 def 名集合 = 内核 op 工具 + feature 注册表（恰五件，防漂移）", async () => {
+    let seen: string[] = [];
+    const llm: LLMClient = {
+      async *stream(input) {
+        seen = input.tools.map((t) => t.function.name);
+        yield { type: "text", delta: "ok" };
+      },
+    };
+    await collect(llm);
+    expect(seen.sort()).toEqual([
+      "bills_stats",
+      "execute_op",
+      "propose_op",
+      "query_bills",
+      "search_news",
+    ]);
   });
 
   it("isCancelled 中断：已产出的部分内容落库，且不再发 done 事件", async () => {
