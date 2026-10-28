@@ -93,18 +93,19 @@ describe("TOOL_DEFS", () => {
 });
 
 describe("buildContext wiring", () => {
-  it("system includes skills + catalog and a pending proposal line", () => {
+  it("system includes skills + catalog and the authoritative op-status block", () => {
     createOpsService(db).proposeOp("bill_create", { item: "衣服", amount_yuan: 200 });
 
     const { system } = buildContext(db);
     expect(system).toContain("暂不支持该功能"); // 来自 SKILLS_PROMPT
     expect(system).toContain("BillConfirmCard"); // 来自 CATALOG_PROMPT
-    expect(system).toContain("当前待确认提议:");
+    expect(system).toContain("提议状态");
+    expect(system).toContain("待确认");
     expect(system).toContain("衣服");
   });
 
-  it("no pending line without a pending proposal", () => {
+  it("no op-status block without proposals", () => {
     const { system } = buildContext(db);
-    expect(system).not.toContain("当前待确认提议:");
+    expect(system).not.toContain("提议状态");
   });
 });

@@ -69,7 +69,7 @@ function validateAmount(cents: number): void {
   }
 }
 
-export function createBill(db: Database, input: CreateBillInput): Bill {
+export function createBill(db: Database.Database, input: CreateBillInput): Bill {
   validateAmount(input.amountCents);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) {
     throw new Error("date 须为 YYYY-MM-DD");
@@ -91,11 +91,11 @@ export function createBill(db: Database, input: CreateBillInput): Bill {
   return getBill(db, Number(row.lastInsertRowid))!;
 }
 
-export function getBill(db: Database, id: number): Bill | undefined {
+export function getBill(db: Database.Database, id: number): Bill | undefined {
   return db.prepare(`${SELECT_BILL} WHERE b.id = ?`).get(id) as Bill | undefined;
 }
 
-export function updateBill(db: Database, id: number, patch: UpdateBillPatch): Bill {
+export function updateBill(db: Database.Database, id: number, patch: UpdateBillPatch): Bill {
   const current = getBill(db, id);
   if (!current) throw new Error(`账单 ${id} 不存在`);
   const next = {
@@ -116,13 +116,13 @@ export function updateBill(db: Database, id: number, patch: UpdateBillPatch): Bi
   return getBill(db, id)!;
 }
 
-export function deleteBill(db: Database, id: number): void {
+export function deleteBill(db: Database.Database, id: number): void {
   const row = db.prepare(`DELETE FROM bills WHERE id = ?`).run(id);
   if (row.changes === 0) throw new Error(`账单 ${id} 不存在`);
 }
 
 /** 类目名（父或叶）→ 该维度包含的全部类目 id 集合。 */
-export function resolveCategoryIds(db: Database, name: string): number[] {
+export function resolveCategoryIds(db: Database.Database, name: string): number[] {
   const cat = db.prepare(`SELECT id FROM categories WHERE name = ?`).get(name) as
     | { id: number }
     | undefined;
@@ -134,7 +134,7 @@ export function resolveCategoryIds(db: Database, name: string): number[] {
   return [cat.id];
 }
 
-export function listBills(db: Database, q: ListBillsQuery): Bill[] {
+export function listBills(db: Database.Database, q: ListBillsQuery): Bill[] {
   const where: string[] = [];
   const params: Record<string, unknown> = {};
   if (q.from) {
@@ -166,7 +166,7 @@ export function listBills(db: Database, q: ListBillsQuery): Bill[] {
     .all(params) as Bill[];
 }
 
-export function billStats(db: Database, q: StatsQuery): StatsRow[] {
+export function billStats(db: Database.Database, q: StatsQuery): StatsRow[] {
   const where: string[] = [];
   const params: Record<string, unknown> = {};
   if (q.from) {

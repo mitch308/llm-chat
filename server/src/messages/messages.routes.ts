@@ -3,7 +3,7 @@ import { Router } from "express";
 import { createMessagesService } from "./messages.service";
 
 /** GET /api/messages?before_id=&limit= → {items}（升序，供前端直接展示）。 */
-export function messagesRoutes(db: Database): Router {
+export function messagesRoutes(db: Database.Database): Router {
   const svc = createMessagesService(db);
   const router = Router();
 

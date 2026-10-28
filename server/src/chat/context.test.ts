@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createMessagesService } from "../messages/messages.service";
+import { createOpsService } from "../ops/ops.service";
 import { buildContext } from "./context";
 
 let dirs: string[] = [];
@@ -82,5 +83,32 @@ describe("buildContext", () => {
     expect(total).toBeLessThanOrEqual(12000);
     // 保留的是最新的
     expect(messages[messages.length - 1].content).toContain("#25");
+  });
+
+  it("injects authoritative op-status so button-confirmed proposals are visible (回归：状态不同步)", async () => {
+    const db = freshDb();
+    const msgs = createMessagesService(db);
+    const ops = createOpsService(db);
+    msgs.appendMessage({ role: "user", contentText: "今天早饭花了3元" });
+    const p = ops.proposeOp("bill_create", {
+      amount_yuan: 3,
+      item: "早饭",
+      date: "2026-10-28",
+    });
+    msgs.appendMessage({ role: "assistant", contentText: "帮你记一笔，请确认" });
+    // 用户点确认按钮 → 动作路由执行的同一生命周期
+    await ops.executeOp(p.op_id, async () => ({ ok: true, data: {} }));
+
+    const { system } = buildContext(db);
+    expect(system).toContain("提议状态");
+    expect(system).toContain("已确认保存");
+    expect(system).toContain("早饭");
+    expect(system).toContain("¥3");
+    expect(system).toContain(p.op_id); // 供后续文字"确认"调用 execute_op
+  });
+
+  it("omits the op-status block when no proposals exist", () => {
+    const { system } = buildContext(freshDb());
+    expect(system).not.toContain("提议状态");
   });
 });

@@ -3,7 +3,7 @@ import { useChat } from "./useChat";
 import MessageList from "./MessageList.vue";
 import ChatInput from "./ChatInput.vue";
 
-const { messages, streaming, send, loadOlder, loadingOlder } = useChat();
+const { messages, streaming, send, stop, loadOlder, loadingOlder } = useChat();
 </script>
 
 <template>
@@ -12,8 +12,13 @@ const { messages, streaming, send, loadOlder, loadingOlder } = useChat();
       <h1>llm-chat</h1>
       <span class="hint">记账 · 新闻 · 富界面对话</span>
     </header>
-    <MessageList :messages="messages" :loading-older="loadingOlder" @load-older="loadOlder" />
-    <ChatInput :disabled="streaming" @send="send" />
+    <MessageList
+      :messages="messages"
+      :loading-older="loadingOlder"
+      :streaming="streaming"
+      @load-older="loadOlder"
+    />
+    <ChatInput :disabled="streaming" @send="send" @stop="stop" />
   </div>
 </template>
 

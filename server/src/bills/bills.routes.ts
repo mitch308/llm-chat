@@ -15,7 +15,7 @@ function bad(res: unknown, message: string): void {
     .json({ code: "VALIDATION", message });
 }
 
-export function billsRoutes(db: Database): Router {
+export function billsRoutes(db: Database.Database): Router {
   const router = Router();
 
   router.get("/bills", (req, res) => {

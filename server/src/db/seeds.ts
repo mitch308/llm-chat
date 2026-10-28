@@ -28,7 +28,7 @@ export const CATEGORY_SEEDS: {
 ];
 
 /** 幂等写入：已存在的名字跳过。 */
-export function seedCategories(db: Database): void {
+export function seedCategories(db: Database.Database): void {
   const insertIfAbsent = db.prepare(
     `INSERT INTO categories (name, kind, parent_id)
      SELECT $name, $kind, $parentId

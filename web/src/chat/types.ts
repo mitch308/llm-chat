@@ -11,6 +11,8 @@ export interface ChatMsg {
   role: "user" | "assistant";
   text: string;
   specLines: string[];
+  /** 工具执行期间的过渡状态（如"正在检索新闻…"），有新内容即清除 */
+  status?: string;
 }
 
 export interface ServerMessage {

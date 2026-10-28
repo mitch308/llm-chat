@@ -2,7 +2,10 @@
 import { ref } from "vue";
 
 defineProps<{ disabled: boolean }>();
-const emit = defineEmits<{ (e: "send", text: string): void }>();
+const emit = defineEmits<{
+  (e: "send", text: string): void;
+  (e: "stop"): void;
+}>();
 const draft = ref("");
 
 function submit() {
@@ -28,8 +31,9 @@ function onEnter(e: KeyboardEvent) {
       placeholder="输入消息，Enter 发送 / Shift+Enter 换行"
       @keydown.enter.exact.prevent="onEnter"
     />
-    <button :disabled="disabled || !draft.trim()" @click="submit">
-      {{ disabled ? "回复中…" : "发送" }}
+    <button v-if="disabled" class="stop" @click="emit('stop')">■ 停止</button>
+    <button v-else :disabled="!draft.trim()" @click="submit">
+      发送
     </button>
   </div>
 </template>
@@ -60,5 +64,9 @@ button {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+button.stop {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 </style>

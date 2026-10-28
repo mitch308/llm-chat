@@ -54,7 +54,7 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function isStale(db: Database, source: SourceId, ttlMs: number): boolean {
+function isStale(db: Database.Database, source: SourceId, ttlMs: number): boolean {
   const row = db
     .prepare(`SELECT MAX(fetched_at) AS latest FROM news_items WHERE source = ?`)
     .get(source) as { latest: string | null };
@@ -62,7 +62,7 @@ function isStale(db: Database, source: SourceId, ttlMs: number): boolean {
   return Date.now() - new Date(row.latest.replace(" ", "T") + "Z").getTime() > ttlMs;
 }
 
-function upsert(db: Database, source: SourceId, raw: RawItem): void {
+function upsert(db: Database.Database, source: SourceId, raw: RawItem): void {
   db.prepare(
     `INSERT INTO news_items (source, external_id, title, url, published_at, heat_score, fetched_at, description)
      VALUES (@source, @external_id, @title, @url, @published_at, @heat_score, @fetched_at, @description)
@@ -97,7 +97,7 @@ function upsert(db: Database, source: SourceId, raw: RawItem): void {
   }
 }
 
-function getFts5EnabledSafe(db: Database): boolean {
+function getFts5EnabledSafe(db: Database.Database): boolean {
   try {
     db.prepare(`SELECT rowid FROM news_fts LIMIT 1`).get();
     return true;
@@ -106,7 +106,7 @@ function getFts5EnabledSafe(db: Database): boolean {
   }
 }
 
-function updateFtsZh(db: Database, id: number, titleZh: string | null): void {
+function updateFtsZh(db: Database.Database, id: number, titleZh: string | null): void {
   try {
     db.prepare(`UPDATE news_fts SET title_zh = ? WHERE rowid = ?`).run(titleZh, id);
   } catch {
@@ -115,7 +115,7 @@ function updateFtsZh(db: Database, id: number, titleZh: string | null): void {
 }
 
 export interface NewsServiceDeps {
-  db: Database;
+  db: Database.Database;
   fetchers: Record<SourceId, NewsFetcher>;
   llm?: LLMClient;
   fts5Enabled?: boolean;
@@ -324,7 +324,7 @@ export function createNewsService(deps: NewsServiceDeps) {
   return { searchNews, sourcesHealth };
 }
 
-function logRun(db: Database, source: string, status: "ok" | "error", count: number, error?: string): void {
+function logRun(db: Database.Database, source: string, status: "ok" | "error", count: number, error?: string): void {
   db.prepare(
     `INSERT INTO news_fetch_runs (source, status, item_count, error, finished_at)
      VALUES (?, ?, ?, ?, datetime('now'))`,

@@ -73,4 +73,21 @@ describe("MessageList", () => {
     expect(w.findAll(".row")).toHaveLength(2);
     w.unmount();
   });
+
+  it("streaming 时最后一条空助手消息显示三点动画（typing 透传）", async () => {
+    const live: ChatMsg[] = [
+      { id: 1, role: "user", text: "帮我记一笔", specLines: [] },
+      { role: "assistant", text: "", specLines: [] },
+    ];
+    const w = mount(MessageList, {
+      props: { messages: live, loadingOlder: false, streaming: true },
+      attachTo: document.body,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(w.find(".typing").exists()).toBe(true);
+    await w.setProps({ streaming: false });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(w.find(".typing").exists()).toBe(false);
+    w.unmount();
+  });
 });

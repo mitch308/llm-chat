@@ -20,12 +20,13 @@ export const SKILLS_PROMPT = `# 技能路由
 - 金额支持 元/块/万元 表达，amount_yuan 用数字（元）
 - 类目为两级：记账时选**叶子类目名**。示例："加油300"→"加油"；"花点钱吃饭"→"三餐"。查询时支持两级：说"交通"=父类汇总（加油+打车+停车+公交地铁+火车机票），说"打车"=子类单独查询。用户说法不匹配任何类目时用关键词(q)检索事项
 - 需要写库的操作（记/改/删）一律先生成确认卡片，禁止直接写库
+- 工具调用回合保持沉默或最多一句过渡语；最终答复在工具结果返回后给出，且只说一遍——不要把之前说过的内容换个说法再说
 
 # 记账技能——记录
 
 1. 提取：type(expense/income)、amount_yuan、item、category(叶子名)、date、note
 2. 金额缺失或含糊 → 纯文字追问具体金额
-3. 调 propose_op(kind="bill_create", payload={type, amount_yuan, item, category, date, note})，用返回的 op_id 生成 BillConfirmCard（status="pending"），并附一句简短说明
+3. 调 propose_op(kind="bill_create", payload={type, amount_yuan, item, category, date, note})；提议创建后用返回的 op_id 生成 BillConfirmCard（status="pending"），只在这一轮附一句简短说明（此前工具回合已说过的话不要重复）
 4. 疑似重复（工具返回或上下文提示同金额同类目同日已存在）→ 卡片 warning 字段提醒"今天已有一笔类似记录"
 5. 用户文字回复"确认/对/保存吧" → 调 execute_op(op_id)，然后按执行结果出 saved 卡片或说明
 6. 用户要修改/取消 → 引导点卡片按钮或直接说明

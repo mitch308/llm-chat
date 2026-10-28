@@ -54,7 +54,7 @@ describe("op proposal lifecycle", () => {
     let calls = 0;
     const run = async () => {
       calls += 1;
-      return { ok: true, data: { id: 42 } };
+      return { ok: true as const, data: { id: 42 } };
     };
     expect(await s.executeOp(p.op_id, run)).toEqual({ status: "executed", data: { id: 42 } });
     expect(await s.executeOp(p.op_id, run)).toEqual({ status: "already", data: { id: 42 } });
@@ -86,11 +86,11 @@ describe("op proposal lifecycle", () => {
     expect(s.getOps([p.op_id])[0].status).toBe("expired");
   });
 
-  it("getPendingSummary hides TTL-dead pending from the system prompt", () => {
+  it("getRecentOpsSummary reports TTL-dead pending as expired (read paths enforce TTL too)", () => {
     const s = svc();
     s.proposeOp("bill_create", { item: "早饭" });
     clock += 11 * 60 * 1000;
-    expect(s.getPendingSummary()).toBeNull();
+    expect(s.getRecentOpsSummary()[0].status).toBe("expired");
   });
 
   it("new proposal supersedes the pending one", async () => {
@@ -139,13 +139,32 @@ describe("op proposal lifecycle", () => {
     });
   });
 
-  it("getPendingSummary reports the pending proposal", () => {
+  it("getRecentOpsSummary lists newest-first with payload and final states", async () => {
     const s = svc();
-    expect(s.getPendingSummary()).toBeNull();
-    const p = s.proposeOp("bill_create", { amount_yuan: 200, item: "衣服" });
-    const summary = s.getPendingSummary();
-    expect(summary).toContain("pending: bill_create");
-    expect(summary).toContain("衣服");
-    expect(summary).toContain(p.op_id);
+    const first = s.proposeOp("bill_create", {
+      amount_yuan: 3,
+      item: "早饭",
+      date: "2026-10-28",
+    });
+    await s.executeOp(first.op_id, async () => ({ ok: true, data: {} })); // 按钮确认的等价路径
+    const second = s.proposeOp("bill_create", { item: "被取消" });
+    s.cancelOp(second.op_id);
+    s.proposeOp("bill_create", { amount_yuan: 400, item: "停车费" }); // 新 pending
+
+    const list = s.getRecentOpsSummary(5);
+    expect(list).toHaveLength(3);
+    expect(list[0]).toMatchObject({ kind: "bill_create", status: "pending" });
+    expect(list[0].payload).toMatchObject({ amount_yuan: 400, item: "停车费" });
+    expect(list[1].status).toBe("cancelled");
+    expect(list[2].status).toBe("executed");
+    expect(list[2].payload).toMatchObject({ amount_yuan: 3, item: "早饭", date: "2026-10-28" });
+  });
+
+  it("getRecentOpsSummary respects limit, newest kept", () => {
+    const s = svc();
+    for (let i = 0; i < 8; i++) s.proposeOp("bill_create", { item: `i${i}` });
+    const list = s.getRecentOpsSummary(5);
+    expect(list).toHaveLength(5);
+    expect(list[0].payload.item).toBe("i7");
   });
 });

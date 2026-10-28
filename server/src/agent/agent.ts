@@ -21,6 +21,66 @@ export type AgentEvent =
 const MAX_ROUNDS = 6;
 const MAX_TOOL_RETRIES = 2;
 
+/** 键序无关的 JSON 规范化（propose_op 重复检测用）。 */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      const src = val as Record<string, unknown>;
+      return Object.keys(src)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = src[k];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
+}
+
+/** 字符 bigram Jaccard 相似度（跨轮叙述去重用）。 */
+function bigramJaccard(a: string, b: string): number {
+  const norm = (s: string) => s.replace(/[\s\p{P}\p{S}]+/gu, "");
+  const x = norm(a);
+  const y = norm(b);
+  if (x.length < 2 || y.length < 2) return x === y ? 1 : 0;
+  const grams = (s: string) => {
+    const set = new Set<string>();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const gx = grams(x);
+  const gy = grams(y);
+  let inter = 0;
+  for (const g of gx) if (gy.has(g)) inter += 1;
+  return inter / (gx.size + gy.size - inter);
+}
+
+/** 实测：模型复读的轮次叙述 ≥0.50，正常不同轮次 ≤0.04，取 0.35 两侧留量。 */
+const DUPLICATE_ROUND_SIMILARITY = 0.35;
+
+/** 跨轮叙述折叠：与任一保留轮次高度相似的整轮文本不入最终消息（spec 行不受影响）。 */
+function collapseRepeatedRounds(
+  parts: { round: number; delta: string }[],
+  roundCount: number,
+): string {
+  const byRound = new Map<number, string>();
+  for (const p of parts) {
+    byRound.set(p.round, (byRound.get(p.round) ?? "") + p.delta);
+  }
+  const dropped = new Set<number>();
+  const kept: string[] = [];
+  for (let r = 0; r < roundCount; r++) {
+    const text = byRound.get(r);
+    if (text === undefined || text.length === 0) continue;
+    if (kept.some((prev) => bigramJaccard(prev, text) >= DUPLICATE_ROUND_SIMILARITY)) {
+      dropped.add(r);
+      continue;
+    }
+    kept.push(text);
+  }
+  return parts.filter((p) => !dropped.has(p.round)).map((p) => p.delta).join("");
+}
+
 /** 工具入参 schema（zod）：失败回喂错误让模型重试。 */
 const argSchemas = {
   query_bills: z
@@ -73,11 +133,13 @@ const argSchemas = {
 
 /** AGENT 循环：上下文 → 流式输出 → 工具执行回喂 → 落库。 */
 export async function* runAgent(opts: {
-  db: Database;
+  db: Database.Database;
   llm: LLMClient;
   content: string;
   /** 可注入的新闻检索（测试用）；默认按需抓取的真实服务。 */
   newsSearch?: (q: SearchNewsQuery) => Promise<NewsSearchResult>;
+  /** 取消探测（如客户端断开）：返回 true 即停止生成，已产出内容照常落库 */
+  isCancelled?: () => boolean;
 }): AsyncIterable<AgentEvent> {
   const { db, llm, content } = opts;
   const messages = createMessagesService(db);
@@ -90,15 +152,18 @@ export async function* runAgent(opts: {
   const { system, messages: history } = buildContext(db);
 
   const splitter = createSpecSplitter();
-  const textParts: string[] = [];
+  /** 文本增量带轮次标签：跨轮叙述折叠的最小单元（行缓冲会把多轮散文并成一个 delta，
+   *  必须靠每轮末的 splitter.flushLine() 制造边界，见循环内）。 */
+  const textParts: { round: number; delta: string }[] = [];
   const specLines: string[] = [];
   const convo: ModelMsg[] = [...history];
   const retries = new Map<string, number>();
+  let currentRound = 0;
 
   function* emitSplit(events: Iterable<{ kind: string; delta?: string; line?: string }>) {
     for (const ev of events) {
       if (ev.kind === "text" && ev.delta !== undefined) {
-        textParts.push(ev.delta);
+        textParts.push({ round: currentRound, delta: ev.delta });
         yield { type: "text", delta: ev.delta } as AgentEvent;
       } else if (ev.kind === "spec" && ev.line !== undefined) {
         specLines.push(ev.line);
@@ -144,38 +209,59 @@ export async function* runAgent(opts: {
     }
     retries.delete(call.name);
 
-    const a = args as Record<string, string | number | string[] | undefined>;
+    const a = args as Record<string, unknown>;
     switch (call.name) {
       case "query_bills": {
+        const q = a as unknown as z.infer<typeof argSchemas.query_bills>;
         const items = listBills(db, {
-          from: a.from,
-          to: a.to,
-          category: a.category,
-          type: a.type,
-          kw: a.q,
-          limit: a.limit ?? 20,
+          from: q.from,
+          to: q.to,
+          category: q.category,
+          type: q.type,
+          kw: q.q,
+          limit: q.limit ?? 20,
         });
         return JSON.stringify({ ok: true, items });
       }
       case "bills_stats": {
+        const s = a as unknown as z.infer<typeof argSchemas.bills_stats>;
         const items = billStats(db, {
-          from: a.from,
-          to: a.to,
-          type: a.type,
-          groupBy: a.group_by,
-          level: a.level,
+          from: s.from,
+          to: s.to,
+          type: s.type,
+          groupBy: s.group_by,
+          level: s.level,
         });
         return JSON.stringify({ ok: true, items });
       }
       case "propose_op": {
         const p = a as unknown as { kind: OpAction; payload: Record<string, unknown> };
+        // 工具循环防护：模型不稳定时会反复 propose 相同内容（每轮开场白被跨轮累积成复读文本，
+        // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之，
+        // 并用强指令把模型拉回「输出 spec 卡片」这一步。
+        const existing = ops
+          .getRecentOpsSummary(10)
+          .find(
+            (o) =>
+              o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(p.payload),
+          );
+        if (existing) {
+          return JSON.stringify({
+            ok: true,
+            duplicate: true,
+            op_id: existing.op_id,
+            kind: p.kind,
+            payload: p.payload,
+            hint: "该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status=\"pending\"，然后正常结束。",
+          });
+        }
         const proposal = ops.proposeOp(p.kind, p.payload);
         return JSON.stringify({
           ok: true,
           op_id: proposal.op_id,
           kind: proposal.kind,
           payload: p.payload,
-          hint: "用 op_id 生成 BillConfirmCard（status=pending），不要直接写库",
+          hint: "提议已创建。立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素（props 含上述 op_id 与 status=\"pending\"），不要再调用任何工具。",
         });
       }
       case "execute_op": {
@@ -201,16 +287,17 @@ export async function* runAgent(opts: {
         }
       }
       case "search_news": {
-        const keywords = Array.isArray(a.keywords) ? (a.keywords as string[]) : [];
-        const mode = a.mode === "hot" ? "hot" : keywords.length > 0 ? "keyword" : "hot";
+        const n = a as unknown as z.infer<typeof argSchemas.search_news>;
+        const keywords = n.keywords ?? [];
+        const mode = n.mode === "hot" ? "hot" : keywords.length > 0 ? "keyword" : "hot";
         try {
           const result = await newsSearch({
             keywords,
             mode,
-            source: typeof a.source === "string" ? (a.source as SourceId) : undefined,
-            from: typeof a.from === "string" ? a.from : undefined,
-            to: typeof a.to === "string" ? a.to : undefined,
-            limit: typeof a.limit === "number" ? a.limit : undefined,
+            source: n.source as SourceId | undefined,
+            from: n.from,
+            to: n.to,
+            limit: n.limit,
           });
           return JSON.stringify({ ok: true, ...result });
         } catch (err) {
@@ -226,12 +313,18 @@ export async function* runAgent(opts: {
   }
 
   let finalMessage: { id: number } | undefined;
+  let cancelled = false;
 
-  for (let round = 0; round < MAX_ROUNDS; round++) {
+  for (let round = 0; round < MAX_ROUNDS && !cancelled; round++) {
+    currentRound = round;
     let calls: ToolCall[] = [];
     let roundText = "";
 
     for await (const delta of llm.stream({ system, messages: convo, tools: TOOL_DEFS })) {
+      if (opts.isCancelled?.()) {
+        cancelled = true;
+        break;
+      }
       if (delta.type === "text") {
         roundText += delta.delta;
         yield* emitSplit(splitter.feed(delta.delta));
@@ -239,6 +332,10 @@ export async function* runAgent(opts: {
         calls = delta.calls;
       }
     }
+    if (cancelled) break;
+
+    // 轮次边界：把行缓冲里的散文立即吐出并归入本轮，跨轮叙述才可按轮折叠
+    yield* emitSplit(splitter.flushLine());
 
     if (calls.length === 0) {
       break;
@@ -247,20 +344,30 @@ export async function* runAgent(opts: {
     // 回喂：assistant(tool_calls) + 每个 tool 的结果
     convo.push({ role: "assistant", content: roundText, tool_calls: calls });
     for (const call of calls) {
+      if (opts.isCancelled?.()) {
+        cancelled = true;
+        break;
+      }
       yield { type: "tool", name: call.name };
       const result = await executeTool(call);
       convo.push({ role: "tool", content: result, tool_call_id: call.id });
     }
   }
 
+  // 取消时也 flush：尾部半行文本属于已产出内容，随部分回复一起落库
   yield* emitSplit(splitter.end());
 
-  const saved = messages.appendMessage({
-    role: "assistant",
-    contentText: textParts.join(""),
-    specJson: specLines.length > 0 ? JSON.stringify(specLines) : null,
-  });
-  finalMessage = { id: saved.id };
+  const contentText = collapseRepeatedRounds(textParts, currentRound + 1);
+  if (!cancelled || contentText.length > 0 || specLines.length > 0) {
+    const saved = messages.appendMessage({
+      role: "assistant",
+      contentText,
+      specJson: specLines.length > 0 ? JSON.stringify(specLines) : null,
+    });
+    finalMessage = { id: saved.id };
+  }
 
-  yield { type: "done", message: finalMessage };
+  if (!cancelled) {
+    yield { type: "done", message: finalMessage };
+  }
 }

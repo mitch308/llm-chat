@@ -4,7 +4,7 @@ import { runAgent } from "../agent/agent";
 import { getDefaultLLMClient, type LLMClient } from "./llm";
 
 /** POST /api/chat {content} → SSE 流（text/spec/tool/done 事件）。 */
-export function chatRoutes(db: Database, llm?: LLMClient): Router {
+export function chatRoutes(db: Database.Database, llm?: LLMClient): Router {
   const router = Router();
 
   router.post("/chat", async (req, res) => {
@@ -31,8 +31,20 @@ export function chatRoutes(db: Database, llm?: LLMClient): Router {
       "X-Accel-Buffering": "no",
     });
 
+    // 客户端断开（如用户点「停止」）：通知 runAgent 停止生成，落库部分回复
+    let clientGone = false;
+    res.on("close", () => {
+      if (!res.writableEnded) clientGone = true;
+    });
+
     try {
-      for await (const event of runAgent({ db, llm: client, content })) {
+      for await (const event of runAgent({
+        db,
+        llm: client,
+        content,
+        isCancelled: () => clientGone,
+      })) {
+        if (clientGone) continue; // 连接已断不再写，但让生成器跑到取消检查点自行收尾
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
     } catch (err) {

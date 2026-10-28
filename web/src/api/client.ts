@@ -5,11 +5,13 @@ import type { AgentEvent, ServerMessage } from "../chat/types";
 export async function streamChat(
   content: string,
   onEvent: (e: AgentEvent) => void,
+  opts?: { signal?: AbortSignal },
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
+    signal: opts?.signal,
   });
   if (!res.ok || !res.body) {
     const message = await res.text().catch(() => "");

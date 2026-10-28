@@ -6,7 +6,7 @@ import { attachQuip, runBillAction, storeResult, type OpAction } from "./ops.exe
 import { getDefaultLLMClient, type LLMClient } from "../chat/llm";
 
 /** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。 */
-export function opsRoutes(db: Database, llm?: LLMClient): Router {
+export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
   const ops = createOpsService(db);
   const router = Router();
 

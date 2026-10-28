@@ -119,8 +119,87 @@ describe("runAgent", () => {
     expect(assistant.content_text).toContain("帮你记一笔");
   });
 
-  it("spec line split across text deltas within a round stays intact", async () => {
+  it("propose_op 重复调用（同 kind+payload）不新建提议，复用既有 pending op_id（回归：工具循环）", async () => {
+    const args = JSON.stringify({
+      kind: "bill_create",
+      payload: { type: "expense", amount_yuan: 500, item: "停车费", category: "停车", date: "2026-10-27" },
+    });
     const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [{ type: "tool_calls", calls: [{ id: "call_1", name: "propose_op", arguments: args }] }];
+      }
+      if (n === 1) {
+        // 模拟模型不稳定：没出卡片，反而再次 propose 相同内容
+        return [{ type: "tool_calls", calls: [{ id: "call_2", name: "propose_op", arguments: args }] }];
+      }
+      if (n === 2) {
+        const op = pendingOp()!;
+        return [
+          { type: "text", delta: "好的，请确认：\n```spec\n" },
+          {
+            type: "text",
+            delta: `{"op":"add","path":"/root","value":"card-1"}\n{"op":"add","path":"/elements/card-1","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
+          },
+          { type: "text", delta: "```\n" },
+        ];
+      }
+      return [];
+    });
+
+    const events = await collect(llm);
+
+    // 关键：只落一条提议（修复前会重复插入并被 supersede 成 expired）
+    const rows = db.prepare("SELECT status FROM op_proposals").all() as { status: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("pending");
+    const op = db.prepare("SELECT op_id FROM op_proposals").get() as { op_id: string };
+    expect(JSON.stringify(events.filter((e) => e.type === "spec"))).toContain(op.op_id);
+  });
+
+  it("近似重复的跨轮叙述在落库时折叠成一份（回归：回复啰嗦）", async () => {
+    const args = JSON.stringify({
+      kind: "bill_create",
+      payload: { type: "expense", amount_yuan: 3, item: "早餐", category: "三餐", date: "2026-10-28" },
+    });
+    const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [
+          { type: "text", delta: "好的，帮你记一笔早餐支出，请确认～已创建一笔记账提议：10月28日 早餐 3元（三餐）。请确认是否保存～" },
+          { type: "tool_calls", calls: [{ id: "c1", name: "propose_op", arguments: args }] },
+        ];
+      }
+      if (n === 1) {
+        // 模型不稳定：没出卡片，叙述后又 propose 了一次（duplicate 防护会拦截）
+        return [
+          { type: "text", delta: "好的，帮你记一笔：今天（10月28日）早餐 3元（三餐）。请确认～" },
+          { type: "tool_calls", calls: [{ id: "c2", name: "propose_op", arguments: args }] },
+        ];
+      }
+      if (n === 2) {
+        const op = pendingOp()!;
+        return [
+          { type: "text", delta: "好的，帮你记一笔早餐支出，请确认～已创建一笔记账提议：10月28日 早餐 3元（三餐）。请确认是否保存～\n```spec\n" },
+          {
+            type: "text",
+            delta: `{"op":"add","path":"/root","value":"card-1"}\n{"op":"add","path":"/elements/card-1","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
+          },
+          { type: "text", delta: "```\n请确认无误后保存～" },
+        ];
+      }
+      return [];
+    });
+
+    const events = await collect(llm);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+
+    const svc = createMessagesService(db);
+    const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
+    // 三段近似重复的叙述折叠成一份：关键短语只出现一次，卡片 spec 完整保留
+    expect(assistant.content_text.match(/请确认是否保存/g) ?? []).toHaveLength(1);
+    expect(assistant.spec_json).toBeTruthy();
+  });
+
+  it("spec line split across text deltas within a round stays intact", async () => {    const llm = lazyLLM((n) => {
       if (n === 0) {
         return [
           { type: "text", delta: "记好了\n" },
@@ -311,4 +390,47 @@ describe("runAgent", () => {
     const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
     expect(specs.some((s) => s.line.includes("NewsList"))).toBe(true);
     expect(events[events.length - 1].type).toBe("done");
-  });});
+  });
+
+  it("isCancelled 中断：已产出的部分内容落库，且不再发 done 事件", async () => {
+    let stopped = false;
+    const llm: LLMClient = {
+      async *stream() {
+        yield { type: "text", delta: "第一段\n" };
+        // 模拟还在持续生成的后续 token
+        while (!stopped) await new Promise((r) => setTimeout(r, 2));
+        yield { type: "text", delta: "第二段\n" };
+      },
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({ db, llm, content: "hi", isCancelled: () => stopped })) {
+      events.push(ev);
+      stopped = true;
+    }
+
+    expect(events).toEqual([{ type: "text", delta: "第一段\n" }]);
+    const svc = createMessagesService(db);
+    const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant");
+    expect(assistant?.content_text).toContain("第一段");
+    expect(assistant?.content_text).not.toContain("第二段");
+  });
+
+  it("isCancelled 且无任何内容时：不落空 assistant 消息", async () => {
+    const llm: LLMClient = {
+      async *stream() {
+        yield { type: "text", delta: "会被丢弃的 token" };
+      },
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({ db, llm, content: "hi", isCancelled: () => true })) {
+      events.push(ev);
+    }
+
+    expect(events).toEqual([]);
+    const svc = createMessagesService(db);
+    const roles = svc.listMessages({ limit: 5 }).map((m) => m.role);
+    expect(roles).toEqual(["user"]);
+  });
+});

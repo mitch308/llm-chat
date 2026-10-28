@@ -20,4 +20,13 @@ describe("ChatInput IME handling (I5)", () => {
     expect(w.emitted("send")).toEqual([["你好"]]);
     expect((w.find("textarea").element as HTMLTextAreaElement).value).toBe("");
   });
+
+  it("流式中的停止按钮发出 stop 事件，而非发送", async () => {
+    const w = mount(ChatInput, { props: { disabled: true } });
+    const stopBtn = w.find("button.stop");
+    expect(stopBtn.exists()).toBe(true);
+    await stopBtn.trigger("click");
+    expect(w.emitted("stop")).toHaveLength(1);
+    expect(w.emitted("send")).toBeUndefined();
+  });
 });

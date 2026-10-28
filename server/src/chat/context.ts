@@ -43,7 +43,7 @@ function compressSpec(specJson: string): string {
   }
 }
 
-export function buildContext(db: Database): { system: string; messages: ModelMsg[] } {
+export function buildContext(db: Database.Database): { system: string; messages: ModelMsg[] } {
   const svc = createMessagesService(db);
   // listMessages 新→旧，反转为时间正序
   const recent = svc.listMessages({ limit: MAX_MESSAGES }).reverse();
@@ -67,8 +67,27 @@ export function buildContext(db: Database): { system: string; messages: ModelMsg
     .replace("{{SKILLS}}", SKILLS_PROMPT)
     .replace("{{CATALOG}}", CATALOG_PROMPT);
 
-  const pending = createOpsService(db).getPendingSummary();
-  const pendingLine = pending ? `\n\n当前待确认提议: ${pending}` : "";
+  const ops = createOpsService(db);
+  const recentOps = ops.getRecentOpsSummary(6);
+  let opsBlock = "";
+  if (recentOps.length > 0) {
+    const STATUS_ZH: Record<string, string> = {
+      pending: "待确认",
+      executed: "已确认保存",
+      cancelled: "已取消",
+      expired: "已过期",
+    };
+    const lines = recentOps.map((o) => {
+      const p = o.payload as { item?: string; amount_yuan?: number; date?: string };
+      const what = [p.item, p.amount_yuan !== undefined ? `¥${p.amount_yuan}` : null, p.date]
+        .filter((part): part is string => part !== null && part !== undefined && part !== "")
+        .join(" ");
+      return `- ${what || o.kind}：${STATUS_ZH[o.status] ?? o.status}（op_id: ${o.op_id ?? ""}）`.trim();
+    });
+    opsBlock =
+      `\n\n提议状态（权威数据，以此为准。用户可能通过点击确认按钮或回复"确认"完成提议，` +
+      `若与你从聊天记录做出的推断冲突，以这里为准，不要再说提议未确认）:\n${lines.join("\n")}`;
+  }
 
-  return { system: system + pendingLine, messages };
+  return { system: system + opsBlock, messages };
 }

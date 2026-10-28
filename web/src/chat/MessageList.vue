@@ -5,7 +5,12 @@ import type { ChatMsg } from "./types";
 import { estimateItemHeight } from "./heights";
 import MessageItem from "./MessageItem.vue";
 
-const props = defineProps<{ messages: ChatMsg[]; loadingOlder: boolean }>();
+const props = defineProps<{
+  messages: ChatMsg[];
+  loadingOlder: boolean;
+  /** 会话是否正在流式输出：最后一条空助手消息显示等待动画 */
+  streaming?: boolean;
+}>();
 const emit = defineEmits<{ (e: "load-older"): void }>();
 
 const containerRef = ref<HTMLElement | null>(null);
@@ -79,7 +84,7 @@ watch(
     <div v-bind="containerProps" class="scroll-container" @scroll.passive="onScroll">
       <div v-bind="wrapperProps">
         <div v-for="{ data, index } in list" :key="data.id ?? `i-${index}`" class="row">
-          <MessageItem :msg="data" />
+          <MessageItem :msg="data" :typing="streaming && index === messages.length - 1" />
         </div>
       </div>
     </div>

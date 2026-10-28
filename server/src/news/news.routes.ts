@@ -6,7 +6,7 @@ import type { SourceId } from "./sources";
 import type { LLMClient } from "../chat/llm";
 
 /** GET /api/news/search 与 /api/news/sources（按需抓取，无任何定时任务）。 */
-export function newsRoutes(db: Database, llm?: LLMClient): Router {
+export function newsRoutes(db: Database.Database, llm?: LLMClient): Router {
   const svc = createNewsService({ db, llm, fetchers: buildSourceFetchers() });
   const router = Router();
 

@@ -49,7 +49,7 @@ describe("createRssFetcher", () => {
       timeoutMs: 20,
       fetchImpl: (async () => {
         await new Promise(() => {});
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
     await expect(fetcher.fetchLatest()).rejects.toThrow(/超时|timeout/i);
   });

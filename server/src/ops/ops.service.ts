@@ -23,6 +23,15 @@ export type ExecOutcome =
   | { status: "already"; data: object }
   | { status: "invalid"; reason: "not_found" | "expired" | "cancelled"; message: string };
 
+/** 最近提议摘要：供系统提示注入权威状态（按钮/文字两条确认路径共用同一状态机）。 */
+export interface OpStatusSummary {
+  op_id: string;
+  kind: OpKind;
+  status: OpStatus;
+  created_at: string;
+  payload: Record<string, unknown>;
+}
+
 const TTL_MS = 10 * 60 * 1000;
 
 export interface OpsService {
@@ -33,7 +42,8 @@ export interface OpsService {
   ): Promise<ExecOutcome>;
   cancelOp(opId: string): void;
   getOps(opIds: string[]): OpProposal[];
-  getPendingSummary(): string | null;
+  /** 最近 N 条提议（新→旧），status 经 TTL 修正 */
+  getRecentOpsSummary(limit?: number): OpStatusSummary[];
 }
 
 /**
@@ -42,14 +52,14 @@ export interface OpsService {
  * 时保持 pending 可重试。
  */
 export function createOpsService(
-  db: Database,
+  db: Database.Database,
   opts: { now?: () => Date; ttlMs?: number } = {},
 ): OpsService {
   const now = opts.now ?? (() => new Date());
   const ttlMs = opts.ttlMs ?? TTL_MS;
 
   /** TTL 已过但尚未被触碰的 pending，对外一律呈现 expired：
-   *  TTL 不只在 executeOp 强制——读路径（卡片状态核对 getOps、系统提示 getPendingSummary）
+   *  TTL 不只在 executeOp 强制——读路径（卡片状态核对 getOps、系统提示 getRecentOpsSummary）
    *  同样按 TTL 呈现，避免把死提议喂给模型或让旧卡片保持可点。 */
   function effectiveStatus(row: OpProposal): OpStatus {
     if (
@@ -129,22 +139,34 @@ export function createOpsService(
     return db
       .prepare(`SELECT * FROM op_proposals WHERE op_id IN (${placeholders})`)
       .all(...opIds)
-      .map((row) => {
+      .map((row: unknown) => {
         const r = row as OpProposal;
         return { ...r, status: effectiveStatus(r) };
       });
   }
 
-  function getPendingSummary(): string | null {
-    const row = db
-      .prepare(`SELECT * FROM op_proposals WHERE status = 'pending' ORDER BY created_at DESC`)
-      .get() as OpProposal | undefined;
-    if (!row || effectiveStatus(row) !== "pending") return null;
-    const payload = row.payload_json.slice(0, 100);
-    return `pending: ${row.kind} ${payload} ${row.op_id}`;
+  function getRecentOpsSummary(limit = 5): OpStatusSummary[] {
+    const rows = db
+      .prepare(`SELECT * FROM op_proposals ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(limit) as unknown as OpProposal[];
+    return rows.map((row) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      } catch {
+        // 坏 payload 容忍：只影响摘要内容，不影响状态
+      }
+      return {
+        op_id: row.op_id,
+        kind: row.kind,
+        status: effectiveStatus(row),
+        created_at: row.created_at,
+        payload,
+      };
+    });
   }
 
-  return { proposeOp, executeOp, cancelOp, getOps, getPendingSummary };
+  return { proposeOp, executeOp, cancelOp, getOps, getRecentOpsSummary };
 }
 
 /** run 返回 ok:false 时抛出，供路由层映射 HTTP 错误。 */

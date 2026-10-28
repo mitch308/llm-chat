@@ -13,7 +13,7 @@ import type { LLMClient } from "../chat/llm";
 export type OpAction = "bill_create" | "bill_update" | "bill_delete";
 
 /** 类目名 → 叶子 id：叶子直接用；父类优先匹配 item 中出现的叶子名，否则第一个叶子。 */
-export function resolveLeafCategoryId(db: Database, name: string, item: string): number {
+export function resolveLeafCategoryId(db: Database.Database, name: string, item: string): number {
   const cat = db.prepare(`SELECT * FROM categories WHERE name = ?`).get(name) as
     | { id: number; parent_id: number | null }
     | undefined;
@@ -40,7 +40,7 @@ export function monthRange(dateStr: string): { from: string; to: string } {
 
 /** executeOp 的 run 回调：payload 校验 + 写库。动作路由与 AGENT execute_op 共用。 */
 export function runBillAction(
-  db: Database,
+  db: Database.Database,
   name: OpAction,
   payload: Record<string, unknown>,
 ): RunResult {
@@ -100,7 +100,7 @@ export function runBillAction(
 
 /** 生成俏皮话（真实统计输入；任何失败返回 null）。 */
 export async function attachQuip(
-  db: Database,
+  db: Database.Database,
   llm: LLMClient | undefined,
   bill: Bill,
 ): Promise<string | null> {
@@ -137,7 +137,7 @@ export async function attachQuip(
 
 /** 把执行结果（含 quip）写回提议。 */
 export function storeResult(
-  db: Database,
+  db: Database.Database,
   opId: string,
   data: object,
   quip: string | null,

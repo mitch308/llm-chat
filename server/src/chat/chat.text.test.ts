@@ -1,13 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createMessagesService } from "../messages/messages.service";
 import { createApp } from "../app";
 import { createFakeLLM } from "./llm";
 import { createSpecSplitter } from "./streamSplitter";
+import type { LLMClient } from "./llm";
 
 let dirs: string[] = [];
 
@@ -44,6 +47,25 @@ describe("createSpecSplitter", () => {
     expect([...sp.feed("还没写完")]).toEqual([]);
     const flushed = sp.end();
     expect(flushed).toEqual([{ kind: "text", delta: "还没写完" }]);
+  });
+
+  it("strips a spec fence glued to the end of a prose line (回归：```spec 泄漏)", () => {
+    const sp = createSpecSplitter();
+    const head = [...sp.feed("新的提议会覆盖它。```spec\n")];
+    expect(head).toEqual([{ kind: "text", delta: "新的提议会覆盖它。\n" }]);
+    const tail = [
+      ...sp.feed('{"op":"add","path":"/root","value":"c1"}\n```\n就这么简单～\n'),
+    ];
+    expect(tail).toEqual([
+      { kind: "spec", line: '{"op":"add","path":"/root","value":"c1"}' },
+      { kind: "text", delta: "就这么简单～\n" },
+    ]);
+  });
+
+  it("keeps prose containing triple backticks that is not a fence", () => {
+    const sp = createSpecSplitter();
+    const events = [...sp.feed("用```包裹代码块\n")];
+    expect(events).toEqual([{ kind: "text", delta: "用```包裹代码块\n" }]);
   });
 });
 
@@ -104,6 +126,57 @@ describe("POST /api/chat (text-only v1)", () => {
       expect(res.body.message).toContain("ZHIPU_API_KEY");
     } finally {
       if (prev !== undefined) process.env.ZHIPU_API_KEY = prev;
+    }
+  });
+
+  it("客户端中途断开：停止生成，仅落库已产出的部分回复", async () => {
+    const db = freshDb();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const llm: LLMClient = {
+      async *stream() {
+        yield { type: "text", delta: "第一段\n" };
+        await gate; // 模拟仍在生成的长回复
+        yield { type: "text", delta: "第二段\n" };
+      },
+    };
+    const app = createApp({ db, llm });
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", r));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port,
+        path: "/api/chat",
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      const gotFirst = new Promise<void>((resolve) => {
+        req.on("response", (res) => {
+          res.setEncoding("utf8");
+          res.on("data", (chunk: string) => {
+            if (chunk.includes("第一段")) resolve();
+          });
+        });
+      });
+      req.end(JSON.stringify({ content: "hi" }));
+      await gotFirst;
+      req.destroy(); // 用户点击「停止」
+      await new Promise((r) => setTimeout(r, 150)); // 等断连事件传播到服务端
+
+      release(); // 让滞留的生成继续（若服务端未停止，会产出第二段）
+      await vi.waitFor(() => {
+        const saved = db
+          .prepare("SELECT content_text FROM messages WHERE role = 'assistant'")
+          .get() as { content_text: string } | undefined;
+        expect(saved?.content_text).toContain("第一段");
+        expect(saved?.content_text).not.toContain("第二段");
+      });
+    } finally {
+      server.close();
+      server.closeAllConnections();
     }
   });
 });

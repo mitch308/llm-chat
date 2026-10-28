@@ -18,7 +18,7 @@ export interface MessagesService {
   }): Message;
 }
 
-export function createMessagesService(db: Database): MessagesService {
+export function createMessagesService(db: Database.Database): MessagesService {
   const listStmt = db.prepare(
     `SELECT * FROM messages
      WHERE (@beforeId IS NULL OR id < @beforeId)

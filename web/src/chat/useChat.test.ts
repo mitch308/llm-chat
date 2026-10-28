@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { watchEffect } from "vue";
 import type { AgentEvent } from "./types";
 
 vi.mock("../api/client", () => ({
@@ -47,7 +48,11 @@ describe("useChat", () => {
     expect(assistant.specLines).toHaveLength(3);
     expect(assistant.id).toBe(9);
     expect(streaming.value).toBe(false);
-    expect(streamChat).toHaveBeenCalledWith("今天买衣服花了200", expect.any(Function));
+    expect(streamChat).toHaveBeenCalledWith(
+      "今天买衣服花了200",
+      expect.any(Function),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("preloads history from getMessages on init", async () => {
@@ -104,4 +109,101 @@ describe("useChat", () => {
     await sending;
     expect(chat.streaming.value).toBe(false);
   });
+
+  it("每个流式 delta 都触发响应式更新（回归：闭包改 raw 对象不触发渲染）", async () => {
+    vi.mocked(streamChat).mockImplementation(
+      async (_content: string, onEvent: (e: AgentEvent) => void) => {
+        onEvent({ type: "text", delta: "早" });
+        onEvent({ type: "text", delta: "上好" });
+      },
+    );
+
+    const { messages, send } = useChat();
+    const seen: string[] = [];
+    const stopWatch = watchEffect(
+      () => {
+        const last = messages.value[messages.value.length - 1];
+        if (last?.role === "assistant") seen.push(last.text);
+      },
+      { flush: "sync" },
+    );
+
+    await send("打招呼");
+    stopWatch();
+
+    // 空气泡、每个中间态、最终态都必须被响应式系统观察到；
+    // （结尾可能叠加历史加载完成的额外触发，不作为断言目标）
+    expect(seen[0]).toBe("");
+    expect(seen).toContain("早");
+    expect(seen[seen.length - 1]).toBe("早上好");
+  });
+
+  it("stop() 中断流式：保留已到内容并标注已停止，不报错", async () => {
+    const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError" });
+    vi.mocked(streamChat).mockImplementation(
+      async (
+        _content: string,
+        onEvent: (e: AgentEvent) => void,
+        opts?: { signal?: AbortSignal },
+      ) => {
+        onEvent({ type: "text", delta: "部分回答" });
+        await new Promise<void>((_resolve, reject) => {
+          if (opts?.signal?.aborted) reject(abortError());
+          else opts?.signal?.addEventListener("abort", () => reject(abortError()));
+        });
+      },
+    );
+
+    const chat = useChat();
+    const sending = chat.send("长问题");
+    await vi.waitFor(() => expect(chat.streaming.value).toBe(true));
+
+    chat.stop();
+    await sending;
+
+    const assistant = chat.messages.value[1];
+    expect(assistant.text).toContain("部分回答");
+    expect(assistant.text).toContain("已停止生成");
+    expect(assistant.text).not.toContain("⚠");
+    expect(chat.streaming.value).toBe(false);
+  });
+
+  it("HTTP 层失败（如未配置 key）也要显示在气泡里，不静默吞掉", async () => {
+    vi.mocked(streamChat).mockRejectedValue(new Error("chat failed: 500 NO_API_KEY"));
+
+    const chat = useChat();
+    await chat.send("在吗");
+
+    const assistant = chat.messages.value[1];
+    expect(assistant.text).toContain("⚠ 回复出错");
+    expect(assistant.text).toContain("NO_API_KEY");
+    expect(chat.streaming.value).toBe(false);
+  });
+
+  it("工具执行期间显示状态行，新内容到达后清除", async () => {
+    vi.mocked(streamChat).mockImplementation(
+      async (_content: string, onEvent: (e: AgentEvent) => void) => {
+        onEvent({ type: "tool", name: "search_news" });
+        onEvent({ type: "text", delta: "查到了" });
+        onEvent({ type: "done", message: { id: 5 } });
+      },
+    );
+
+    const { messages, send } = useChat();
+    const seen: (string | undefined)[] = [];
+    const stopWatch = watchEffect(
+      () => {
+        const last = messages.value[messages.value.length - 1];
+        if (last?.role === "assistant") seen.push(last.status);
+      },
+      { flush: "sync" },
+    );
+
+    await send("看新闻");
+    stopWatch();
+
+    expect(seen).toContain("正在检索新闻…");
+    expect(messages.value[1].status).toBeUndefined();
+  });
 });
+

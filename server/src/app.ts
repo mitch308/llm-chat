@@ -8,7 +8,7 @@ import { newsRoutes } from "./news/news.routes";
 import type { LLMClient } from "./chat/llm";
 
 export interface AppDeps {
-  db: Database;
+  db: Database.Database;
   llm?: LLMClient;
 }
 
