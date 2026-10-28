@@ -20,6 +20,7 @@
   "dependencies": {
     "@json-render/core": "^0.21.3",
     "@json-render/vue": "^0.21.3",
+    "@llm-chat/features": "workspace:*",
     "@mozilla/readability": "^0.6.0",
     "better-sqlite3": "^13.0.3",
     "express": "^5.3.0",
