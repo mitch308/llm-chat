@@ -171,19 +171,23 @@ describe("searchNews", () => {
     expect(res.skippedSources).toEqual(["bbc"]);
   });
 
-  it("translates and summarizes foreign items via article extraction, writes back cache", async () => {
+  it("translation runs in background: search responds first, flush persists the cache", async () => {
     const c: Counters = { latest: {}, range: {} };
     const html = "<html><body><article><h1>Big AI Release</h1><p>" + "A very long story. ".repeat(30) + "</p></article></body></html>";
-    const llm: LLMClient = createFakeLLM([
-      [
-        {
+    // 受控 LLM：release 之前不吐译文 → 证明 searchNews 不等翻译
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const llm: LLMClient = {
+      async *stream() {
+        await gate;
+        yield {
           type: "text",
           delta: JSON.stringify([
             { external_id: "hn-1", title_zh: "AI 大发布", summary_zh: "某公司发布了新模型，性能大幅提升，社区反响热烈，值得关注后续生态进展。" },
           ]),
-        },
-      ],
-    ]);
+        };
+      },
+    };
 
     const svc = createNewsService({
       db,
@@ -194,10 +198,13 @@ describe("searchNews", () => {
     insertNews("hackernews", "hn-1", "Big AI Release");
 
     const res = await svc.searchNews({ keywords: ["AI"], mode: "keyword" });
-    expect(res.items[0].title_zh).toBe("AI 大发布");
-    expect(res.items[0].summary_zh!.length).toBeLessThanOrEqual(100);
+    // 不等翻译：响应先回，译文还没生成
+    expect(res.items[0].title_zh).toBeNull();
 
-    // 回写缓存：再查一次不再调 LLM（第二轮脚本为空 => 调用即抛错，不抛即证明未调）
+    release();
+    await svc.flushTranslations();
+
+    // 译文入库；再查一次带出译文，且不再触发抓取与 LLM
     const svc2 = createNewsService({
       db,
       llm: createFakeLLM([]),
@@ -208,6 +215,7 @@ describe("searchNews", () => {
     });
     const res2 = await svc2.searchNews({ keywords: ["AI"], mode: "keyword" });
     expect(res2.items[0].title_zh).toBe("AI 大发布");
+    expect(res2.items[0].summary_zh!.length).toBeLessThanOrEqual(100);
   });
 
   it("article extraction failure degrades to RSS description, then to no summary", async () => {
@@ -236,8 +244,16 @@ describe("searchNews", () => {
     });
     const res = await svc.searchNews({ keywords: ["story"], mode: "keyword" });
 
-    const bbc = res.items.find((i) => i.external_id === "bbc-1")!;
-    const tc = res.items.find((i) => i.external_id === "tc-1")!;
+    // 响应先行：译文字段尚未生成
+    expect(res.items.find((i) => i.external_id === "bbc-1")!.title_zh).toBeNull();
+
+    await svc.flushTranslations();
+
+    // 译文入库后再查带出
+    const res2 = await svc.searchNews({ keywords: ["story"], mode: "keyword" });
+    const bbc = res2.items.find((i) => i.external_id === "bbc-1")!;
+    const tc = res2.items.find((i) => i.external_id === "tc-1")!;
+    expect(bbc.title_zh).toBe("BBC 中文题");
     expect(bbc.summary_zh).toBe("据 BBC 报道的简要内容概括。");
     expect(tc.summary_zh).toBe("TechCrunch 简要内容。"); // description 也缺失 → 仅译题
   });

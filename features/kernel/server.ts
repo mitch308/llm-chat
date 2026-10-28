@@ -61,6 +61,22 @@ export interface ToolEntry {
   execute(args: unknown, env: ToolEnv): Promise<unknown>;
 }
 
+/** 服务端直出确认卡片的输入：agent 循环在 propose_op/execute_op 成功后组装。 */
+export interface OpCardInput {
+  opId: string;
+  kind: string;
+  status: "pending" | "executed";
+  payload: Record<string, unknown>;
+  /** status="executed" 时的执行结果 data（如 {bill}）；pending 时为 null。 */
+  data: Record<string, unknown> | null;
+}
+
+/** 直出卡片的组件声明（type 须在 catalog 注册，props 由 feature 按 shared 契约构造）。 */
+export interface OpCardComponent {
+  type: string;
+  props: Record<string, unknown>;
+}
+
 export interface OpHandler {
   argPayload: ZodType; // propose_op 的 payload 校验（按 kind 查）
   execute(
@@ -68,7 +84,23 @@ export interface OpHandler {
     env: ToolEnv,
   ): Promise<RunResult> | RunResult;
   afterExecute?(env: ToolEnv & { opId: string }, data: object): void; // 写结果 + quip 等后置
-  cardHint?: { created: string; duplicate: string }; // propose_op 新建/重复提议两条回喂的 spec 卡片指令
+  cardHint?: { created: string; duplicate: string }; // 回退用：无 cardSpec 时 propose_op 两条回喂的 spec 卡片指令
+  /** 服务端直出确认卡片：propose_op/execute_op 成功后由 agent 循环直接产出 spec 并收尾回合，
+   *  不再消耗模型轮次（LLM 调用准则：服务端已确定的内容不消耗模型轮次）。
+   *  返回 null（或未提供）时回退 cardHint，由模型出卡片。 */
+  cardSpec?(input: OpCardInput, env: ToolEnv): OpCardComponent | null;
+}
+
+/** 直出卡片的 spec JSONL 行（/root + /elements/confirm-card，与模型手写格式一致）。 */
+export function confirmCardLines(card: OpCardComponent): string[] {
+  return [
+    JSON.stringify({ op: "add", path: "/root", value: "confirm-card" }),
+    JSON.stringify({
+      op: "add",
+      path: "/elements/confirm-card",
+      value: { type: card.type, props: card.props, children: [] },
+    }),
+  ];
 }
 
 export interface CatalogComponentDef {

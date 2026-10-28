@@ -128,6 +128,8 @@ export function createNewsService(deps: NewsServiceDeps) {
   const { db, fetchers, llm } = deps;
   const ttlMs = deps.ttlMs ?? TTL_MINUTES * 60_000;
   const fts5 = () => deps.fts5Enabled ?? isFts5Enabled();
+  /** 最近一次后台译写 promise（flushTranslations 等它）。 */
+  let lastTranslation: Promise<void> | null = null;
 
   async function extractArticleText(url: string, fallbackDescription: string | null): Promise<string | null> {
     const doFetch = deps.articleFetch ?? fetch;
@@ -154,14 +156,15 @@ export function createNewsService(deps: NewsServiceDeps) {
     if (foreign.length === 0) return;
     const batch = foreign.slice(0, TRANSLATE_BATCH);
 
-    const materials: { external_id: string; title: string; text: string | null }[] = [];
-    for (const it of batch) {
-      const row = db
-        .prepare(`SELECT description FROM news_items WHERE id = ?`)
-        .get(it.id) as { description: string | null } | undefined;
-      const text = await extractArticleText(it.url, row?.description ?? null);
-      materials.push({ external_id: it.external_id, title: it.title, text });
-    }
+    const materials = await Promise.all(
+      batch.map(async (it) => {
+        const row = db
+          .prepare(`SELECT description FROM news_items WHERE id = ?`)
+          .get(it.id) as { description: string | null } | undefined;
+        const text = await extractArticleText(it.url, row?.description ?? null);
+        return { external_id: it.external_id, title: it.title, text };
+      }),
+    );
 
     // 构建 prompt
     const system = `你是新闻编辑。对输入的每条外文新闻输出中文译题 title_zh 与不超过100字的中文摘要 summary_zh。
@@ -290,7 +293,9 @@ export function createNewsService(deps: NewsServiceDeps) {
     }
 
     const items = rows.map((r) => ({ ...r }));
-    await translateAndSummarize(items);
+    // 译写不阻塞响应（LLM 调用准则：可晚点到的生成后台化，参照 bills quip 模式）：
+    // 先回数据，译文后台补写入库，下次查询时可见
+    lastTranslation = translateAndSummarize(items).catch(() => {});
 
     const dataTimeRow = db
       .prepare(`SELECT MAX(fetched_at) AS t FROM news_items`)
@@ -302,6 +307,11 @@ export function createNewsService(deps: NewsServiceDeps) {
       skippedSources,
       failedSources,
     };
+  }
+
+  /** 等待在途的后台译写完成（测试/收尾用；无在途时立即返回）。 */
+  async function flushTranslations(): Promise<void> {
+    if (lastTranslation) await lastTranslation;
   }
 
   function sourcesHealth(): { source: string; status: string; last_run: string | null; items: number }[] {
@@ -321,7 +331,7 @@ export function createNewsService(deps: NewsServiceDeps) {
     });
   }
 
-  return { searchNews, sourcesHealth };
+  return { searchNews, sourcesHealth, flushTranslations };
 }
 
 function logRun(db: Database.Database, source: string, status: "ok" | "error", count: number, error?: string): void {

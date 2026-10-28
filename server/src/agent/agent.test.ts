@@ -87,10 +87,13 @@ function withSearchNews(fake: (q: unknown) => Promise<unknown>): Map<string, Too
 }
 
 describe("runAgent", () => {
-  it("propose flow: tool call → card spec with server op_id, persisted", async () => {
+  it("propose flow: 服务端直出确认卡片，模型不花卡片轮（1 次 LLM 调用）", async () => {
+    let llmRounds = 0;
     const llm = lazyLLM((n) => {
+      llmRounds = n + 1;
       if (n === 0) {
         return [
+          { type: "text", delta: "好的，帮你记一笔，请确认：" },
           {
             type: "tool_calls",
             calls: [
@@ -112,46 +115,45 @@ describe("runAgent", () => {
           },
         ];
       }
-      if (n === 1) {
-        const op = pendingOp()!;
-        const cardId = "card-1";
-        return [
-          { type: "text", delta: "帮你记一笔，请确认：\n" },
-          { type: "text", delta: "```spec\n" },
-          { type: "text", delta: `{"op":"add","path":"/root","value":"${cardId}"}\n` },
-          {
-            type: "text",
-            delta: `{"op":"add","path":"/elements/${cardId}","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
-          },
-          { type: "text", delta: "```\n" },
-        ];
-      }
-      return [];
+      return undefined; // 第 2 轮被请求即抛错：卡片之后不允许再有模型轮
     });
 
     const events = await collect(llm);
 
-    // 序列：tool → text → spec×2 → done
-    expect(events[0]).toEqual({ type: "tool", name: "propose_op" });
-    expect(events[1]).toEqual({ type: "text", delta: "帮你记一笔，请确认：\n" });
-    const specs = events.filter((e) => e.type === "spec");
+    // 序列：text → tool → 服务端 spec×2 → done
+    expect(events[0]).toEqual({ type: "text", delta: "好的，帮你记一笔，请确认：" });
+    expect(events[1]).toEqual({ type: "tool", name: "propose_op" });
+    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
     expect(specs).toHaveLength(2);
-    const done = events[events.length - 1];
-    expect(done.type).toBe("done");
+    expect(JSON.parse(specs[0].line)).toEqual({ op: "add", path: "/root", value: "confirm-card" });
+    const element = JSON.parse(specs[1].line) as {
+      path: string;
+      value: { type: string; props: Record<string, unknown> };
+    };
+    expect(element.path).toBe("/elements/confirm-card");
+    expect(element.value.type).toBe("BillConfirmCard");
+    expect(element.value.props).toMatchObject({
+      kind: "bill_create",
+      status: "pending",
+      data: { type: "expense", amount_yuan: 200, item: "衣服", category: "衣服", date: "2026-10-27", note: null },
+      diff: null,
+      quip: null,
+      warning: null,
+    });
+    expect(events[events.length - 1].type).toBe("done");
+    expect(llmRounds).toBe(1);
 
     // 提议落库且 op_id 出现在 spec 里
     const op = pendingOp();
     expect(op).toBeDefined();
     expect(JSON.parse(op!.payload_json)).toMatchObject({ amount_yuan: 200, item: "衣服" });
-    const specLine = JSON.stringify(specs);
-    expect(specLine).toContain(op!.op_id);
+    expect(specs[1].line).toContain(op!.op_id);
 
-    // assistant 消息 spec_json 可解析
+    // assistant 消息：文本 + spec_json 各就各位
     const svc = createMessagesService(db);
     const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
     expect(assistant.spec_json).toBeTruthy();
-    const parsed = JSON.parse(assistant.spec_json!) as string[];
-    expect(parsed).toHaveLength(2);
+    expect(JSON.parse(assistant.spec_json!) as string[]).toHaveLength(2);
     expect(assistant.content_text).toContain("帮你记一笔");
   });
 
@@ -275,72 +277,41 @@ describe("runAgent", () => {
     });
   });
 
-  it("propose_op 重复调用（同 kind+payload）不新建提议，复用既有 pending op_id（回归：工具循环）", async () => {
-    const args = JSON.stringify({
-      kind: "bill_create",
-      payload: { type: "expense", amount_yuan: 500, item: "停车费", category: "停车", date: "2026-10-27" },
-    });
+  it("propose_op 重复调用（同 kind+payload）复用既有 pending op_id，服务端直出卡片", async () => {
+    const payload = { type: "expense", amount_yuan: 500, item: "停车费", category: "停车", date: "2026-10-27" };
+    const seed = createOpsService(db).proposeOp("bill_create", payload);
+    let llmRounds = 0;
     const llm = lazyLLM((n) => {
+      llmRounds = n + 1;
       if (n === 0) {
-        return [{ type: "tool_calls", calls: [{ id: "call_1", name: "propose_op", arguments: args }] }];
+        // 模拟模型不稳定：对已存在的提议再次 propose 相同内容
+        return [{ type: "tool_calls", calls: [{ id: "call_1", name: "propose_op", arguments: JSON.stringify({ kind: "bill_create", payload }) }] }];
       }
-      if (n === 1) {
-        // 模拟模型不稳定：没出卡片，反而再次 propose 相同内容
-        return [{ type: "tool_calls", calls: [{ id: "call_2", name: "propose_op", arguments: args }] }];
-      }
-      if (n === 2) {
-        const op = pendingOp()!;
-        return [
-          { type: "text", delta: "好的，请确认：\n```spec\n" },
-          {
-            type: "text",
-            delta: `{"op":"add","path":"/root","value":"card-1"}\n{"op":"add","path":"/elements/card-1","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
-          },
-          { type: "text", delta: "```\n" },
-        ];
-      }
-      return [];
+      return undefined;
     });
 
     const events = await collect(llm);
 
-    // 关键：只落一条提议（修复前会重复插入并被 supersede 成 expired）
+    // 关键：仍然只有一条提议（重复调用不新建）
     const rows = db.prepare("SELECT status FROM op_proposals").all() as { status: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("pending");
-    const op = db.prepare("SELECT op_id FROM op_proposals").get() as { op_id: string };
-    expect(JSON.stringify(events.filter((e) => e.type === "spec"))).toContain(op.op_id);
+    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
+    expect(JSON.stringify(specs)).toContain(seed.op_id);
+    expect(llmRounds).toBe(1);
   });
 
-  it("近似重复的跨轮叙述在落库时折叠成一份（回归：回复啰嗦）", async () => {
-    const args = JSON.stringify({
-      kind: "bill_create",
-      payload: { type: "expense", amount_yuan: 3, item: "早餐", category: "三餐", date: "2026-10-28" },
-    });
+  it("近似重复的跨轮叙述在落库时折叠成一份（回归：回复啰嗦；走 execute_op 失败路径）", async () => {
     const llm = lazyLLM((n) => {
       if (n === 0) {
         return [
-          { type: "text", delta: "好的，帮你记一笔早餐支出，请确认～已创建一笔记账提议：10月28日 早餐 3元（三餐）。请确认是否保存～" },
-          { type: "tool_calls", calls: [{ id: "c1", name: "propose_op", arguments: args }] },
+          { type: "text", delta: "稍等，我确认一下这笔账" },
+          { type: "tool_calls", calls: [{ id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: "wrong" }) }] },
         ];
       }
       if (n === 1) {
-        // 模型不稳定：没出卡片，叙述后又 propose 了一次（duplicate 防护会拦截）
-        return [
-          { type: "text", delta: "好的，帮你记一笔：今天（10月28日）早餐 3元（三餐）。请确认～" },
-          { type: "tool_calls", calls: [{ id: "c2", name: "propose_op", arguments: args }] },
-        ];
-      }
-      if (n === 2) {
-        const op = pendingOp()!;
-        return [
-          { type: "text", delta: "好的，帮你记一笔早餐支出，请确认～已创建一笔记账提议：10月28日 早餐 3元（三餐）。请确认是否保存～\n```spec\n" },
-          {
-            type: "text",
-            delta: `{"op":"add","path":"/root","value":"card-1"}\n{"op":"add","path":"/elements/card-1","value":{"type":"BillConfirmCard","props":{"op_id":"${op.op_id}","status":"pending"}},"children":[]}\n`,
-          },
-          { type: "text", delta: "```\n请确认无误后保存～" },
-        ];
+        // 模型不稳定：换个说法复读同一句
+        return [{ type: "text", delta: "稍等，我确认一下这笔账的保存状态" }];
       }
       return [];
     });
@@ -350,9 +321,10 @@ describe("runAgent", () => {
 
     const svc = createMessagesService(db);
     const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
-    // 三段近似重复的叙述折叠成一份：关键短语只出现一次，卡片 spec 完整保留
-    expect(assistant.content_text.match(/请确认是否保存/g) ?? []).toHaveLength(1);
-    expect(assistant.spec_json).toBeTruthy();
+    // 两段近似重复的叙述折叠成一份：关键短语只出现一次
+    expect(assistant.content_text.match(/我确认一下/g) ?? []).toHaveLength(1);
+    // 失败路径不直出卡片
+    expect(events.some((e) => e.type === "spec")).toBe(false);
   });
 
   it("转向其他任务时，启动时已 pending 的提议自动取消（回归：卡片滞留 pending）", async () => {
@@ -402,6 +374,64 @@ describe("runAgent", () => {
       .prepare("SELECT status FROM op_proposals WHERE op_id = ?")
       .get(seed.op_id) as { status: string };
     expect(status.status).toBe("executed");
+  });
+
+  it("execute_op 成功 → 服务端直出 saved 卡片，模型不花额外轮（1 次 LLM 调用）", async () => {
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 400,
+      item: "停车费",
+      category: "停车",
+      date: "2026-10-27",
+    });
+    // 只计 agent 回合：quip 后台生成走 tools:[] 的独立调用，不算回合
+    let agentRounds = 0;
+    const llm: LLMClient = {
+      async *stream(input) {
+        if (input.tools.length === 0) return; // 后台 quip：空流即可
+        agentRounds += 1;
+        if (agentRounds > 1) throw new Error(`unexpected agent round ${agentRounds}`);
+        yield {
+          type: "tool_calls",
+          calls: [{ id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: seed.op_id }) }],
+        };
+      },
+    };
+
+    const events = await collect(llm);
+
+    expect(agentRounds).toBe(1);
+    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
+    expect(specs).toHaveLength(2);
+    const element = JSON.parse(specs[1].line) as {
+      value: { type: string; props: Record<string, unknown> };
+    };
+    expect(element.value.type).toBe("BillConfirmCard");
+    expect(element.value.props).toMatchObject({
+      op_id: seed.op_id,
+      kind: "bill_create",
+      status: "saved",
+      data: { type: "expense", amount_yuan: 400, item: "停车费", category: "停车", date: "2026-10-27", note: null },
+      quip: null, // quip 后台生成，卡片自轮询补齐
+    });
+  });
+
+  it("execute_op 失败（提议不存在）→ 不直出卡片，模型解释轮保留", async () => {
+    const llm = lazyLLM((n) =>
+      n === 0
+        ? [
+            {
+              type: "tool_calls",
+              calls: [
+                { id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: "wrong" }) },
+              ],
+            },
+          ]
+        : [{ type: "text", delta: "这笔提议找不到了，请重新记一笔" }],
+    );
+
+    const events = await collect(llm);
+    expect(events.some((e) => e.type === "spec")).toBe(false);
+    expect(events[events.length - 1].type).toBe("done");
   });
 
   it("execute_op 失败也不自动取消（保留重试机会）", async () => {

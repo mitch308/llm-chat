@@ -7,7 +7,7 @@ pnpm monorepo：`server/`（Node+TS 单服务：REST API + AGENT 运行时 + SQL
 ```bash
 pnpm install
 pnpm dev            # 并行起 server(127.0.0.1:8787) + web(vite 5173，/api 代理到 8787)
-pnpm -r test        # 全部测试（计数以实测为准，当前 server 147 + web 53——server/web 的 vitest 会顺带收集 features 侧用例；全部无网络、无真实 API key）
+pnpm -r test        # 全部测试（计数以实测为准，当前 server 155 + web 53——server/web 的 vitest 会顺带收集 features 侧用例；全部无网络、无真实 API key）
 
 # 单包 / 单文件（必须进包目录或用 --filter；根目录没有 vitest）
 cd server && npx vitest run src/ops/ops.test.ts
@@ -28,11 +28,24 @@ pnpm --filter @llm-chat/server test
 - **依赖注入贯穿**：`createApp({db, llm})`（`server/src/app.ts`）；fetchers/articleFetch/fts5Enabled/ttlMs/now 全部可注入。新增功能保持这个模式，别在测试里碰真网络。
 - **features 架构（业务与核心的边界）**：一个业务 = `features/<名>/` 一个目录（`shared.ts` 组件契约单源 + `server/` + `web/`），核心只消费注册贡献物。server 侧 `server/src/features.ts` 模块加载时扫描 `features/` 下含 `server/index.ts` 的目录（**目录名排序 = 注册顺序**）组装成 ASM（DDL/种子/路由/工具/catalog/技能/ops）；web 侧 `web/src/render/registry.ts` 用 `import.meta.glob` + 顶层 await 组装。组装期键冲突（tool/组件/动作/op kind/组件 type，含内置 cancel_op）直接抛错。**增 feature**：建目录 → 两侧 index.ts default 导出 define*Feature 注册 → 在 `features/kernel/consistency.test.ts` 与 `web/src/render/registry.test.ts` 的清单并集断言里加 `*_COMPONENTS` → 跑 `pnpm -r test`。**删 feature**：把目录移出 features/ 或整体删除（**features/ 内改名不会移除**——扫描只看目录内是否含 server/index.ts）+ 清两处断言引用；漏清会得到守卫测试的模块收集错误（Cannot find module），**新增**漏加清单则是并集断言失败（两侧集合不等）——两者都响亮、不会静默丢失。详见 `docs/superpowers/specs/2026-10-28-features-architecture.md`。
 - **SSE 协议**：服务端做文字/JSONL 分离（`chat/streamSplitter.ts`，内部事件用 `{kind}`），对前端事件是 `{"type":"text"|"spec"|"tool"|"done"|"error"}`。历史消息的 spec 以 JSONL 行数组存 `messages.spec_json`。
-- **写操作必须走提议生命周期**（`ops/ops.service.ts`）：服务端发 op_id、全局最多 1 个 pending、TTL 10 分钟、executed 幂等重放。动作路由有 kind 一致性守卫（`POST /api/actions/:name` 的 name 必须等于提议的 kind，否则 409 OP_KIND_MISMATCH）——别绕过。
+- **写操作必须走提议生命周期**（`ops/ops.service.ts`）：服务端发 op_id、全局最多 1 个 pending、TTL 10 分钟、executed 幂等重放。动作路由有 kind 一致性守卫（`POST /api/actions/:name` 的 name 必须等于提议的 kind，否则 409 OP_KIND_MISMATCH）——别绕过。确认/已保存卡片由服务端经 `OpHandler.cardSpec` 直出（propose/execute 成功即收尾回合，不花模型轮次）；handler 未提供 cardSpec 时回退 `cardHint` 由模型出卡。
 - **新闻关键词检索刻意用 LIKE，不用 FTS MATCH**：FTS5 unicode61 把 CJK+拉丁混排标题（"上周的AI新闻"）切成单一 token，`MATCH 'AI'` 命中不了。`news_fts` 表存在但检索路径不用它；要换就上 trigram 分词器并重写测试。
 - 账单金额库内一律 `amount_cents` 整数；类目两级（种子在 `features/bills/server/seeds.ts`），bills 必须挂**叶子**类目；父类名查询在 `features/bills/server/bills.service.ts` 展开为全部子类。
 - DB 无迁移系统：核心 DDL 在 `db/schema.ts`，业务表 DDL 由各 feature 经 `ctx.ddl`/`ctx.ddlOptional` 贡献（`db/connection.ts` 合并顺序执行，可选条目失败降级 FTS→LIKE）。改列 = 改 DDL + `pnpm db:rebuild` 删库重建（开发期可接受；实现在 `db/rebuild.ts` + `scripts/rebuild-db.ts`）。
 - 中文输入法：`ChatInput.vue` 的 Enter 有 `isComposing/keyCode 229` 守卫，改动输入逻辑时别丢。
+
+## LLM 调用准则（省次数、省上下文）
+
+对模型的每次调用 = 全量 system + 历史 + 工具回喂重发，轮次与上下文都是硬成本。新增或修改任何触发 LLM 的流程，先过这份清单：
+
+- **轮次是硬成本，先算最少轮数**：agent 循环每多一轮 = 多一次完整调用（`MAX_ROUNDS=6` 是护栏不是目标）。目标：纯文字 1 轮、带工具 2 轮（调工具 → 出结果/卡片）；写操作的提议生命周期已是这个下限，不要再加轮。
+- **服务端已确定的内容不消耗模型轮次**：op_id、payload、状态翻转后的卡片都是服务端已知的确定性产物，不该让模型花一轮"换个格式吐回来"——发现这类环节就是重构信号。
+- **工具回喂保持短 JSON**：回喂只放模型下一步需要的字段（ok/op_id/error/hint）；列表数据主要靠 spec 卡片给前端渲染，回喂侧裁剪到必要字段，别把整页结果灌进上下文。
+- **锦上添花的生成后台化**：quip 模式（`features/bills/server/quip.ts`）是范本——fire-and-forget、独立小上下文（不带对话历史）、超时兜底 null、失败静默。任何"可以晚点到/可以没有"的生成都照此模式，不阻塞主回合。
+- **批量与增量**：多条目的译写/摘要合并为一次调用（参照 news 的 `TRANSLATE_BATCH`：批量上限、只处理缺失字段、正文截断），禁止逐条调用。
+- **上下文有硬顶，注入先问必要性**：历史 20 条 / 12000 字符截断、历史卡片压成 `[卡片: 类型]` 一行、提议状态块只在有提议时注入（`chat/context.ts`）。新增 system 注入先问：模型缺这条会不会做错事？不会就不注入。
+- **防复读靠机制不靠恳求**：同 kind+payload 的 propose_op 复用既有 op_id、跨轮叙述 `collapseRepeatedRounds` 折叠。提示词里"不要重复"只是辅助，兜底必须落在代码上。
+- **测试零真实调用**：一律 `createFakeLLM(script)` 注入脚本；真实 API key 只出现在 README 标注的手测清单里。
 
 ## 文档优先级
 

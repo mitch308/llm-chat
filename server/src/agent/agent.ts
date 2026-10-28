@@ -6,7 +6,12 @@ import { buildContext } from "../chat/context";
 import { createSpecSplitter } from "../chat/streamSplitter";
 import { createOpsService } from "../ops/ops.service";
 import { ASM } from "../features";
-import type { OpHandler, ToolEntry } from "@llm-chat/features/server";
+import {
+  confirmCardLines,
+  type OpCardInput,
+  type OpHandler,
+  type ToolEntry,
+} from "@llm-chat/features/server";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -86,7 +91,7 @@ const OP_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "propose_op",
       description:
-        "创建写操作提议（不直接写库）。返回 op_id 用于生成确认卡片。同一时刻只有一个待确认提议，新的会取代旧的",
+        "创建写操作提议（不直接写库）。成功后服务端直接下发确认卡片并结束本轮，不要自己再输出卡片",
       parameters: {
         type: "object",
         properties: {
@@ -114,7 +119,7 @@ const OP_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "execute_op",
       description:
-        "执行待确认提议。仅当用户对眼前的确认卡片明确文字确认（如「确认/对/保存吧」）时才可调用",
+        "执行待确认提议。仅当用户对眼前的确认卡片明确文字确认（如「确认/对/保存吧」）时才可调用；成功后服务端直接下发已保存卡片",
       parameters: {
         type: "object",
         properties: {
@@ -180,6 +185,17 @@ export async function* runAgent(opts: {
   const convo: ModelMsg[] = [...history];
   const retries = new Map<string, number>();
   let currentRound = 0;
+  /** 服务端直出卡片待发行：executeToolInner 无法 yield，先攒这里，本轮工具执行完后统一发出并收尾回合。 */
+  let serverCardLines: string[] | null = null;
+
+  /** handler 提供 cardSpec 时构造卡片并入队；返回是否已接管（接管则回喂不再带 hint）。 */
+  function emitServerCard(handler: OpHandler, input: OpCardInput): boolean {
+    if (!handler.cardSpec) return false;
+    const card = handler.cardSpec(input, { db, llm });
+    if (!card) return false;
+    serverCardLines = confirmCardLines(card);
+    return true;
+  }
 
   function* emitSplit(events: Iterable<{ kind: string; delta?: string; line?: string }>) {
     for (const ev of events) {
@@ -267,8 +283,9 @@ export async function* runAgent(opts: {
         const handler = opHandler!; // kind 与 payload 已在入参校验段通过（含重试升级）
         const payload = p.payload;
         // 工具循环防护：模型不稳定时会反复 propose 相同内容（每轮开场白被跨轮累积成复读文本，
-        // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之，
-        // 并用强指令把模型拉回「输出 spec 卡片」这一步。
+        // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之。
+        // 卡片由服务端直出（LLM 调用准则：服务端已确定的内容不消耗模型轮次）：
+        // 接管后回合在工具后收尾，不再要模型轮；handler 未提供 cardSpec 时回退 hint（旧行为）。
         const existing = ops
           .getRecentOpsSummary(10)
           .find(
@@ -277,6 +294,24 @@ export async function* runAgent(opts: {
           );
         if (existing) {
           createdOpIds.add(existing.op_id);
+          if (
+            emitServerCard(handler, {
+              opId: existing.op_id,
+              kind: p.kind,
+              status: "pending",
+              payload,
+              data: null,
+            })
+          ) {
+            return JSON.stringify({
+              ok: true,
+              duplicate: true,
+              op_id: existing.op_id,
+              kind: p.kind,
+              payload,
+              card: "server",
+            });
+          }
           return JSON.stringify({
             ok: true,
             duplicate: true,
@@ -288,6 +323,23 @@ export async function* runAgent(opts: {
         }
         const proposal = ops.proposeOp(p.kind, payload);
         createdOpIds.add(proposal.op_id);
+        if (
+          emitServerCard(handler, {
+            opId: proposal.op_id,
+            kind: proposal.kind,
+            status: "pending",
+            payload,
+            data: null,
+          })
+        ) {
+          return JSON.stringify({
+            ok: true,
+            op_id: proposal.op_id,
+            kind: proposal.kind,
+            payload,
+            card: "server",
+          });
+        }
         return JSON.stringify({
           ok: true,
           op_id: proposal.op_id,
@@ -315,6 +367,23 @@ export async function* runAgent(opts: {
           const data = outcome.data as Record<string, unknown>;
           // handler 后置（写结果 + quip 转后台生成补写），工具立即返回（不拖慢回合与卡片对账信号）
           handler.afterExecute?.({ db, llm, opId: p.op_id }, data);
+          let opPayload: Record<string, unknown> = {};
+          try {
+            opPayload = JSON.parse(proposal.payload_json) as Record<string, unknown>;
+          } catch {
+            // 坏 payload 容忍：cardSpec 的 executed 态只用 data，不依赖 payload
+          }
+          if (
+            emitServerCard(handler, {
+              opId: p.op_id,
+              kind: proposal.kind,
+              status: "executed",
+              payload: opPayload,
+              data,
+            })
+          ) {
+            return JSON.stringify({ ok: true, status: outcome.status, card: "server" });
+          }
           return JSON.stringify({ ok: true, status: outcome.status, ...data });
         } catch (err) {
           return JSON.stringify({
@@ -378,6 +447,17 @@ export async function* runAgent(opts: {
       yield { type: "tool", name: call.name };
       const result = await executeTool(call);
       convo.push({ role: "tool", content: result, tool_call_id: call.id });
+    }
+    if (cancelled) break;
+
+    // 服务端直出卡片：附到本轮工具之后，回合立即收尾（LLM 调用准则：不花模型轮）
+    if (serverCardLines) {
+      for (const line of serverCardLines) {
+        specLines.push(line);
+        yield { type: "spec", line } as AgentEvent;
+      }
+      serverCardLines = null;
+      break;
     }
   }
 

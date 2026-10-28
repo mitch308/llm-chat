@@ -181,3 +181,85 @@ describe("billOpHandler（OpHandler 装配）", () => {
     });
   });
 });
+
+describe("cardSpec：服务端直出确认卡片（agent 循环消费）", () => {
+  const cardInput = (
+    kind: "bill_create" | "bill_update" | "bill_delete",
+    payload: Record<string, unknown>,
+    over: Partial<{ status: "pending" | "executed"; data: unknown }> = {},
+  ) => ({
+    opId: "op_x",
+    kind,
+    status: over.status ?? ("pending" as const),
+    payload,
+    data: (over.data ?? null) as Record<string, unknown> | null,
+  });
+
+  it("bill_create pending：data 从 payload 还原；疑似重复（同金额+同类目+同日期）→ warning", () => {
+    const handler = billOpHandler("bill_create");
+    const card = handler.cardSpec!(cardInput("bill_create", createPayload), { db });
+    expect(card).toEqual({
+      type: "BillConfirmCard",
+      props: {
+        op_id: "op_x",
+        kind: "bill_create",
+        status: "pending",
+        data: { type: "expense", amount_yuan: 200, item: "衣服", category: "衣服", date: "2026-10-27", note: null },
+        diff: null,
+        quip: null,
+        warning: null,
+      },
+    });
+
+    // 同金额+同类目+同日期已存在 → spec 8.4 第 4 步的黄色提醒
+    const catId = (db.prepare("SELECT id FROM categories WHERE name='衣服'").get() as { id: number }).id;
+    db.prepare(`INSERT INTO bills (type, amount_cents, item, category_id, date) VALUES ('expense', 20000, '外套', ?, '2026-10-27')`).run(catId);
+    const card2 = handler.cardSpec!(cardInput("bill_create", createPayload), { db });
+    expect(card2!.props.warning).toBe("今天已有一笔类似记录");
+  });
+
+  it("bill_update pending：data 为提议后新状态，diff 展示 变更前→变更后", () => {
+    const id = seedBill(6800, "寿司");
+    const handler = billOpHandler("bill_update");
+    const card = handler.cardSpec!(
+      cardInput("bill_update", { id, amount_yuan: 150, item: "寿司", category: "三餐", date: "2026-10-27" }),
+      { db },
+    );
+    expect(card!.props.kind).toBe("bill_update");
+    expect(card!.props.data).toMatchObject({ amount_yuan: 150 });
+    expect(card!.props.diff).toEqual({
+      before: { type: "expense", amount_yuan: 68, item: "寿司", category: "三餐", date: "2026-10-27", note: null },
+      after: { type: "expense", amount_yuan: 150, item: "寿司", category: "三餐", date: "2026-10-27", note: null },
+    });
+  });
+
+  it("bill_delete pending：卡片展示将删除的记录（diff.after=null）", () => {
+    const id = seedBill();
+    const handler = billOpHandler("bill_delete");
+    const card = handler.cardSpec!(cardInput("bill_delete", { id }), { db });
+    expect(card!.props.data).toMatchObject({ item: "寿司", amount_yuan: 68 });
+    expect(card!.props.diff).toEqual({
+      before: { type: "expense", amount_yuan: 68, item: "寿司", category: "三餐", date: "2026-10-27", note: null },
+      after: null,
+    });
+  });
+
+  it("executed：从落库 bill 还原 saved 卡片；quip 留空，由卡片对账补齐", () => {
+    const handler = billOpHandler("bill_create");
+    const bill = createBill(db, {
+      type: "expense",
+      amountCents: 20000,
+      item: "衣服",
+      categoryId: (db.prepare("SELECT id FROM categories WHERE name='衣服'").get() as { id: number }).id,
+      date: "2026-10-27",
+    });
+    const card = handler.cardSpec!(
+      cardInput("bill_create", {}, { status: "executed", data: { bill } }),
+      { db },
+    );
+    expect(card!.props.status).toBe("saved");
+    expect(card!.props.data).toMatchObject({ amount_yuan: 200, item: "衣服", category: "衣服" });
+    expect(card!.props.quip).toBeNull();
+    expect(card!.props.diff).toBeNull();
+  });
+});

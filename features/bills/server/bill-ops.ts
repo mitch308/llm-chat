@@ -112,6 +112,31 @@ const billOpPayload = z
   })
   .passthrough();
 
+/** Bill 行 → BillConfirmCard props.data（amount_cents 还原为元，类目用展示名）。 */
+function billCardData(bill: Bill) {
+  return {
+    type: bill.type,
+    amount_yuan: bill.amount_cents / 100,
+    item: bill.item,
+    category: bill.categoryName,
+    date: bill.date,
+    note: bill.note,
+  };
+}
+
+/** 疑似重复（spec 8.4 第 4 步：同金额+同类目+同日期已存在 → 卡片提醒，仍允许确认）。 */
+function hasSimilarBill(db: Database.Database, payload: Record<string, unknown>): boolean {
+  try {
+    const categoryId = resolveLeafCategoryId(db, String(payload.category), String(payload.item));
+    const row = db
+      .prepare(`SELECT 1 FROM bills WHERE amount_cents = ? AND category_id = ? AND date = ? LIMIT 1`)
+      .get(yuanToCents(Number(payload.amount_yuan)), categoryId, String(payload.date));
+    return row !== undefined;
+  } catch {
+    return false; // 类目解析不了交给 execute 报错，卡片不给 warning
+  }
+}
+
 /** 按 kind 闭包分发：三种账单动作共用一套 payload 校验与后置流程，
  *  仅 execute 落到不同的 runBillAction 分支。 */
 export function billOpHandler(kind: OpAction): OpHandler {
@@ -128,6 +153,71 @@ export function billOpHandler(kind: OpAction): OpHandler {
         '提议已创建。立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素（props 含上述 op_id 与 status="pending"），不要再调用任何工具。',
       duplicate:
         '该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status="pending"，然后正常结束。',
+    },
+    cardSpec: (input, env) => {
+      if (input.status === "pending") {
+        const p = input.payload;
+        let data: Record<string, unknown>;
+        let diff: { before: Record<string, unknown> | null; after: Record<string, unknown> | null } | null = null;
+        if (kind === "bill_create") {
+          data = {
+            type: p.type === "income" ? "income" : "expense",
+            amount_yuan: p.amount_yuan,
+            item: p.item,
+            category: p.category,
+            date: p.date,
+            note: typeof p.note === "string" ? p.note : null,
+          };
+        } else {
+          const before = getBill(env.db, Number(p.id));
+          const beforeData = before ? billCardData(before) : null;
+          if (kind === "bill_delete") {
+            // 删除确认：卡片展示将删除的记录
+            data = (beforeData ?? { type: "expense", amount_yuan: 0, item: String(p.item ?? ""), category: String(p.category ?? ""), date: String(p.date ?? ""), note: null }) as Record<string, unknown>;
+            diff = { before: beforeData, after: null };
+          } else {
+            // 修改确认：data 为提议后的新状态，diff 展示 变更前→变更后
+            const after: Record<string, unknown> = beforeData ? { ...beforeData } : { type: "expense", note: null };
+            if (p.amount_yuan !== undefined) after.amount_yuan = p.amount_yuan;
+            if (p.item !== undefined) after.item = p.item;
+            if (p.category !== undefined) after.category = p.category;
+            if (p.date !== undefined) after.date = p.date;
+            if (p.note !== undefined) after.note = typeof p.note === "string" ? p.note : null;
+            data = after;
+            diff = { before: beforeData, after };
+          }
+        }
+        return {
+          type: "BillConfirmCard",
+          props: {
+            op_id: input.opId,
+            kind,
+            status: "pending",
+            data,
+            diff,
+            quip: null,
+            warning:
+              kind === "bill_create" && hasSimilarBill(env.db, input.payload)
+                ? "今天已有一笔类似记录"
+                : null,
+          },
+        };
+      }
+      // executed：从落库 bill 还原；quip 后台生成，卡片自轮询补齐
+      const bill = (input.data as { bill?: Bill } | null)?.bill;
+      if (!bill) return null;
+      return {
+        type: "BillConfirmCard",
+        props: {
+          op_id: input.opId,
+          kind,
+          status: "saved",
+          data: billCardData(bill),
+          diff: null,
+          quip: null,
+          warning: null,
+        },
+      };
     },
   };
 }
