@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isFts5Enabled, setFts5Enabled } from "@llm-chat/features/server";
 import { ASM } from "../features";
-import { DDL, DDL_FTS } from "./schema";
+import { DDL } from "./schema";
 
 const instances = new Map<string, Database.Database>();
 
@@ -25,7 +25,7 @@ export function getDb(dbPath?: string): Database.Database {
 
   db.exec([...DDL, ...ASM.ddl].join(";\n"));
 
-  // ASM 可选 DDL：逐条尝试，首个失败即停并降级（当前空装配为 no-op）
+  // ASM 可选 DDL（news feature 的 FTS5 虚表）：逐条尝试，首个失败即停并降级 LIKE
   let optionalOk = true;
   for (const stmt of ASM.ddlOptional) {
     try {
@@ -36,13 +36,6 @@ export function getDb(dbPath?: string): Database.Database {
     }
   }
   setFts5Enabled(optionalOk);
-  try {
-    db.exec(DDL_FTS);
-    if (optionalOk) setFts5Enabled(true);
-  } catch {
-    // FTS5 未编译：检索降级 LIKE，不阻塞启动
-    setFts5Enabled(false);
-  }
   // 种子经 ASM.seedFns 注入（bills feature 注册 seedCategories）
   for (const run of ASM.seedFns) run(db);
 

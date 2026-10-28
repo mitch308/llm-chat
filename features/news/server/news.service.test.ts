@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeAllForTests, getDb } from "../db/connection";
-import { createFakeLLM, type LLMClient } from "../chat/llm";
+import { closeAllForTests, getDb } from "../../../server/src/db/connection";
+import { createFakeLLM, type LLMClient } from "../../../server/src/chat/llm";
 import type { NewsFetcher, RawItem, SourceId } from "./sources";
 import { createNewsService } from "./news.service";
 

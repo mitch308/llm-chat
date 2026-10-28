@@ -8,9 +8,9 @@ import { createOpsService } from "../ops/ops.service";
 import { attachQuipInBackground, runBillAction, storeResult, type OpAction } from "../ops/ops.executor";
 import { billStats, listBills } from "../../../features/bills/server/bills.service";
 import { TOOL_DEFS } from "./tools";
-import { createNewsService, type NewsSearchResult, type SearchNewsQuery } from "../news/news.service";
-import { buildSourceFetchers } from "../news/fetchers";
-import type { SourceId } from "../news/sources";
+import { createNewsService, type NewsSearchResult, type SearchNewsQuery } from "../../../features/news/server/news.service";
+import { buildSourceFetchers } from "../../../features/news/server/fetchers";
+import type { SourceId } from "../../../features/news/server/sources";
 
 export type AgentEvent =
   | { type: "text"; delta: string }

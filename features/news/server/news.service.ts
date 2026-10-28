@@ -1,10 +1,10 @@
 import type Database from "better-sqlite3";
 import { Readability } from "@mozilla/readability";
 import { DOMParser } from "linkedom";
-import type { LLMClient } from "../chat/llm";
+import type { LLMClient } from "../../../server/src/chat/llm";
 import type { NewsFetcher, RawItem, SourceId } from "./sources";
 import { FOREIGN_SOURCES } from "./sources";
-import { getFts5Enabled } from "../db/connection";
+import { isFts5Enabled } from "@llm-chat/features/server";
 
 export interface NewsItem {
   id: number;
@@ -127,7 +127,7 @@ export interface NewsServiceDeps {
 export function createNewsService(deps: NewsServiceDeps) {
   const { db, fetchers, llm } = deps;
   const ttlMs = deps.ttlMs ?? TTL_MINUTES * 60_000;
-  const fts5 = () => deps.fts5Enabled ?? getFts5Enabled();
+  const fts5 = () => deps.fts5Enabled ?? isFts5Enabled();
 
   async function extractArticleText(url: string, fallbackDescription: string | null): Promise<string | null> {
     const doFetch = deps.articleFetch ?? fetch;

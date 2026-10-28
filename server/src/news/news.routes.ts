@@ -1,8 +1,8 @@
 import type Database from "better-sqlite3";
 import { Router } from "express";
-import { createNewsService } from "./news.service";
-import { buildSourceFetchers, SOURCE_IDS } from "./fetchers";
-import type { SourceId } from "./sources";
+import { createNewsService } from "../../../features/news/server/news.service";
+import { buildSourceFetchers, SOURCE_IDS } from "../../../features/news/server/fetchers";
+import type { SourceId } from "../../../features/news/server/sources";
 import type { LLMClient } from "../chat/llm";
 
 /** GET /api/news/search 与 /api/news/sources（按需抓取，无任何定时任务）。 */
