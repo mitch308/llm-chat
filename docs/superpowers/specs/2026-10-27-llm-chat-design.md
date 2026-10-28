@@ -248,6 +248,7 @@
 - prepend 保持视口不跳动；流式期间自动追底；用户上翻时暂停追底，出现"回到底部"悬浮按钮
 
 ### 9.3 流式与渲染
+> **2026-10-28 更新**：组件目录/Actions/Registry 的代码位置已随 features 重构迁移（catalog 定义在 `features/<名>/server/`、组件实现在 `features/<名>/web/`、契约单源在 `features/<名>/shared.ts`），本节清单内容不变；架构见 `2026-10-28-features-architecture.md`。
 - SSE 消费：按 inline 模式分离文字与 JSONL patch，逐行编译 spec，Renderer 渐进渲染
 - 组件目录（catalog，v1 清单，props 用 zod 定义并附 description 供 AI 理解）：
   - `BillConfirmCard`（提议数据、状态：pending/saved/cancelled/error、变更前后 diff、确认/取消/重试动作、saved 态底部俏皮话气泡）
