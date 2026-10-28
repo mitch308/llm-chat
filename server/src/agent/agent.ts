@@ -6,7 +6,7 @@ import { buildContext } from "../chat/context";
 import { createSpecSplitter } from "../chat/streamSplitter";
 import { createOpsService } from "../ops/ops.service";
 import { ASM } from "../features";
-import type { ToolEntry } from "@llm-chat/features/server";
+import type { OpHandler, ToolEntry } from "@llm-chat/features/server";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -128,7 +128,8 @@ const OP_TOOL_DEFS: ToolDef[] = [
 
 /** 工具入参 schema（zod）：内核 op 工具用内置 schema，feature 工具查注册表。
  *  propose_op 只校验信封（kind 为自由字符串，注册表 ASM.ops 为权威）；
- *  payload 按 kind 对应 OpHandler.argPayload 在 case 内校验。 */
+ *  kind/payload 按 OpHandler（argPayload）在 executeToolInner 的入参校验段
+ *  （retries 清零之前）校验，与信封失败共用同一重试升级。 */
 const argSchemas = {
   propose_op: z
     .object({
@@ -227,31 +228,44 @@ export async function* runAgent(opts: {
       }
       args = parsed.data;
     }
+
+    // propose_op：kind（注册表键）与 payload（OpHandler.argPayload）校验。
+    // 必须放在下方 retries.delete 之前——信封通过即清零会让计数永远停在 1，
+    // fatal 升级不可达、模型复读非法入参直到 MAX_ROUNDS（回归修复）。
+    let opHandler: OpHandler | undefined;
+    if (call.name === "propose_op") {
+      const p = args as unknown as { kind: string; payload: Record<string, unknown> };
+      opHandler = ASM.ops.get(p.kind);
+      if (!opHandler) {
+        const used = (retries.get(call.name) ?? 0) + 1;
+        retries.set(call.name, used);
+        if (used > MAX_TOOL_RETRIES) {
+          return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
+        }
+        return JSON.stringify({ ok: false, error: `未知提议类型: ${p.kind}` });
+      }
+      const parsedPayload = opHandler.argPayload.safeParse(p.payload);
+      if (!parsedPayload.success) {
+        const used = (retries.get(call.name) ?? 0) + 1;
+        retries.set(call.name, used);
+        if (used > MAX_TOOL_RETRIES) {
+          return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
+        }
+        return JSON.stringify({
+          ok: false,
+          error: `入参不合法: ${parsedPayload.error.issues.map((i) => i.message).join("; ")}`,
+        });
+      }
+      args = { kind: p.kind, payload: parsedPayload.data };
+    }
     retries.delete(call.name);
 
     const a = args as Record<string, unknown>;
     switch (call.name) {
       case "propose_op": {
         const p = a as unknown as { kind: string; payload: Record<string, unknown> };
-        // kind 为注册表键（ASM.ops，feature 贡献）：未知 kind 直接回喂可读错误
-        const handler = ASM.ops.get(p.kind);
-        if (!handler) {
-          return JSON.stringify({ ok: false, error: `未知提议类型: ${p.kind}` });
-        }
-        // payload 按 kind 对应的 argPayload 校验（失败回喂重试，与信封校验同一语义）
-        const parsed = handler.argPayload.safeParse(p.payload);
-        if (!parsed.success) {
-          const used = (retries.get(call.name) ?? 0) + 1;
-          retries.set(call.name, used);
-          if (used > MAX_TOOL_RETRIES) {
-            return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
-          }
-          return JSON.stringify({
-            ok: false,
-            error: `入参不合法: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
-          });
-        }
-        const payload = parsed.data as Record<string, unknown>;
+        const handler = opHandler!; // kind 与 payload 已在入参校验段通过（含重试升级）
+        const payload = p.payload;
         // 工具循环防护：模型不稳定时会反复 propose 相同内容（每轮开场白被跨轮累积成复读文本，
         // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之，
         // 并用强指令把模型拉回「输出 spec 卡片」这一步。

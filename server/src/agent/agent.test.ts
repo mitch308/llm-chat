@@ -197,6 +197,84 @@ describe("runAgent", () => {
     expect(n).toBe(0);
   });
 
+  it("propose_op payload 持续非法 → 第 3 次回喂 fatal 放弃（重试升级不被信封通过清零）", async () => {
+    const fed: string[] = [];
+    const badArgs = JSON.stringify({
+      kind: "bill_create",
+      payload: { item: "衣服", category: "衣服", date: "2026-10-27" }, // 缺 amount_yuan
+    });
+    const llm: LLMClient = {
+      async *stream(input) {
+        const toolMsgs = input.messages.filter((m) => m.role === "tool");
+        if (toolMsgs.length === 0) {
+          yield { type: "tool_calls", calls: [{ id: "c1", name: "propose_op", arguments: badArgs }] };
+          return;
+        }
+        fed.push(...toolMsgs.slice(fed.length).map((m) => m.content));
+        if (toolMsgs.length >= 3) {
+          yield { type: "text", delta: "放弃" };
+          return;
+        }
+        yield {
+          type: "tool_calls",
+          calls: [{ id: `c${toolMsgs.length + 1}`, name: "propose_op", arguments: badArgs }],
+        };
+      },
+    };
+
+    await collect(llm);
+
+    // 前 2 次（≤ MAX_TOOL_RETRIES）回喂具体错误，第 3 次升级 fatal
+    expect(fed).toHaveLength(3);
+    for (const r of [fed[0], fed[1]]) {
+      expect(JSON.parse(r).ok).toBe(false);
+      expect(JSON.parse(r).error).toContain("入参不合法");
+      expect(JSON.parse(r).fatal).toBeUndefined();
+    }
+    expect(JSON.parse(fed[2])).toEqual({
+      ok: false,
+      error: "入参多次不合法，放弃该工具",
+      fatal: true,
+    });
+    // 全程不落提议
+    const n = (db.prepare("SELECT COUNT(*) AS n FROM op_proposals").get() as { n: number }).n;
+    expect(n).toBe(0);
+  });
+
+  it("propose_op 未知 kind 持续出现 → 第 3 次同样 fatal 放弃（与旧版 kind enum 失败同语义）", async () => {
+    const fed: string[] = [];
+    const badArgs = JSON.stringify({ kind: "unknown_kind", payload: { anything: 1 } });
+    const llm: LLMClient = {
+      async *stream(input) {
+        const toolMsgs = input.messages.filter((m) => m.role === "tool");
+        if (toolMsgs.length === 0) {
+          yield { type: "tool_calls", calls: [{ id: "c1", name: "propose_op", arguments: badArgs }] };
+          return;
+        }
+        fed.push(...toolMsgs.slice(fed.length).map((m) => m.content));
+        if (toolMsgs.length >= 3) {
+          yield { type: "text", delta: "放弃" };
+          return;
+        }
+        yield {
+          type: "tool_calls",
+          calls: [{ id: `c${toolMsgs.length + 1}`, name: "propose_op", arguments: badArgs }],
+        };
+      },
+    };
+
+    await collect(llm);
+
+    expect(fed).toHaveLength(3);
+    expect(JSON.parse(fed[0])).toEqual({ ok: false, error: "未知提议类型: unknown_kind" });
+    expect(JSON.parse(fed[1])).toEqual({ ok: false, error: "未知提议类型: unknown_kind" });
+    expect(JSON.parse(fed[2])).toEqual({
+      ok: false,
+      error: "入参多次不合法，放弃该工具",
+      fatal: true,
+    });
+  });
+
   it("propose_op 重复调用（同 kind+payload）不新建提议，复用既有 pending op_id（回归：工具循环）", async () => {
     const args = JSON.stringify({
       kind: "bill_create",
