@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getDb, getFts5Enabled, closeAllForTests } from "./connection";
+import { getDb, getFts5Enabled, closeAllForTests, closeDb } from "./connection";
 
 let dirs: string[] = [];
 
@@ -23,6 +23,19 @@ describe("db layer", () => {
   it("returns the same instance for the same path", () => {
     const p = tempDbPath();
     expect(getDb(p)).toBe(getDb(p));
+  });
+
+  it("closeDb closes and forgets the instance for that path", () => {
+    const p = tempDbPath();
+    const db = getDb(p);
+    closeDb(p);
+    const reopened = getDb(p);
+    expect(reopened).not.toBe(db);
+    expect(reopened.prepare("SELECT 1 AS n").get()).toEqual({ n: 1 });
+  });
+
+  it("closeDb is a no-op for a path that was never opened", () => {
+    expect(() => closeDb(path.join(tmpdir(), "never-opened.db"))).not.toThrow();
   });
 
   it("creates all 6 tables", () => {

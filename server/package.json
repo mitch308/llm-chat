@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "db:rebuild": "tsx scripts/rebuild-db.ts",
     "test": "vitest run"
   },
   "devDependencies": {

@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --parallel --filter @llm-chat/server --filter @llm-chat/web dev",
+    "db:rebuild": "pnpm --filter @llm-chat/server db:rebuild",
     "test": "pnpm -r test"
   },
   "pnpm": {

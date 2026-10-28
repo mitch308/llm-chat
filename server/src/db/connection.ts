@@ -41,6 +41,16 @@ export function getFts5Enabled(): boolean {
   return fts5Enabled;
 }
 
+/** 关闭并遗忘指定路径的实例；未打开则无操作。 */
+export function closeDb(dbPath?: string): void {
+  const resolved = path.resolve(dbPath ?? DEFAULT_DB_PATH);
+  const db = instances.get(resolved);
+  if (db) {
+    db.close();
+    instances.delete(resolved);
+  }
+}
+
 /** 仅测试用：关闭并遗忘全部实例。 */
 export function closeAllForTests(): void {
   for (const db of instances.values()) db.close();
