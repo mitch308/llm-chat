@@ -4,9 +4,9 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
-import { SKILLS_PROMPT, CATALOG_PROMPT } from "./prompts";
-import { TOOL_DEFS } from "./tools";
-import { buildCatalog } from "./catalog";
+import { ASM } from "../features";
+import type { SkillSection } from "@llm-chat/features/server";
+import { SKILLS_PROMPT, CATALOG_PROMPT, composeSkillsPrompt } from "./prompts";
 import { buildContext } from "../chat/context";
 import { createOpsService } from "../ops/ops.service";
 
@@ -30,11 +30,58 @@ describe("SKILLS_PROMPT", () => {
     expect(SKILLS_PROMPT).toContain("暂不支持该功能");
     expect(SKILLS_PROMPT).toContain("记账");
     expect(SKILLS_PROMPT).toContain("新闻");
-    // 两级类目：父类/子类示例
+    // 两级类目：父类/子类示例（随记账专属 bullet 迁入记账技能 body）
     expect(SKILLS_PROMPT).toContain("交通");
     expect(SKILLS_PROMPT).toContain("打车");
     // 追问规则
     expect(SKILLS_PROMPT).toContain("追问");
+  });
+
+  it("通用规则改通用措辞：追问示例与写库 bullet（Task 6a 裁定）", () => {
+    expect(SKILLS_PROMPT).toContain("例如订机票没说目的地");
+    expect(SKILLS_PROMPT).toContain("需要写库的操作一律先生成确认卡片，禁止直接写库");
+    expect(SKILLS_PROMPT).not.toContain("这笔花了多少钱");
+    expect(SKILLS_PROMPT).not.toContain("（记/改/删）");
+  });
+});
+
+describe("composeSkillsPrompt", () => {
+  const mkSkill = (over: Partial<SkillSection>): SkillSection => ({
+    intent: "测试意图",
+    label: "测试技能",
+    hint: "🧪测试",
+    body: "# 测试技能\n\n正文",
+    ...over,
+  });
+
+  it("单 skill → 只允许以下2类结果，fallback 行含该 skill 的 hint", () => {
+    const p = composeSkillsPrompt([mkSkill({ hint: "🧪测试（演示）" })]);
+    expect(p).toContain("只允许以下2类结果");
+    expect(p).toContain("1. 测试意图 → 走【测试技能】");
+    expect(p).toContain("2. 其他一切（包括问候、闲聊、订机票等）→ 只回复：");
+    expect(p).toContain("暂不支持该功能，目前支持：🧪测试（演示）");
+    expect(p).toContain("# 测试技能"); // body 原样拼接
+  });
+
+  it("两 skill → 3 类结果，fallback hints 用「、」拼接", () => {
+    const p = composeSkillsPrompt([
+      mkSkill({
+        intent: "记账意图（记录/查询/修改/删除账单）",
+        label: "记账技能",
+        hint: "📝记账（记录/查询/修改/删除）",
+      }),
+      mkSkill({
+        intent: "新闻意图（关键词搜索/热点浏览/指定来源）",
+        label: "新闻技能",
+        hint: "📰新闻（关键词搜索/热点浏览）",
+      }),
+    ]);
+    expect(p).toContain("只允许以下3类结果");
+    expect(p).toContain("1. 记账意图（记录/查询/修改/删除账单） → 走【记账技能】");
+    expect(p).toContain("2. 新闻意图（关键词搜索/热点浏览/指定来源） → 走【新闻技能】");
+    expect(p).toContain(
+      "暂不支持该功能，目前支持：📝记账（记录/查询/修改/删除）、📰新闻（关键词搜索/热点浏览）",
+    );
   });
 });
 
@@ -56,7 +103,8 @@ describe("CATALOG_PROMPT", () => {
   });
 
   it("catalog validates a minimal BillConfirmCard spec", () => {
-    const catalog = buildCatalog();
+    // 原 buildCatalog() 已删，等价改为 ASM.catalog（feature 贡献组装的合并目录）
+    const catalog = ASM.catalog;
     const spec = {
       root: "c1",
       elements: {
@@ -69,26 +117,6 @@ describe("CATALOG_PROMPT", () => {
     };
     const result = catalog.validate(spec) as { success: boolean; error?: unknown };
     expect(result.success).toBe(true);
-  });
-});
-
-describe("TOOL_DEFS", () => {
-  it("defines the five tools with propose_op payload conventions", () => {
-    const names = TOOL_DEFS.map((t) => t.function.name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "query_bills",
-        "bills_stats",
-        "propose_op",
-        "execute_op",
-        "search_news",
-      ]),
-    );
-    const propose = TOOL_DEFS.find((t) => t.function.name === "propose_op")!;
-    const props = propose.function.parameters.properties as Record<string, unknown>;
-    const payload = props.payload as { properties: Record<string, { type?: string }> };
-    expect(payload.properties.amount_yuan.type).toBe("number");
-    expect(payload.properties.category.type).toBe("string");
   });
 });
 

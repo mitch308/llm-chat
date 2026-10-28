@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeAllForTests, getDb } from "../db/connection";
-import { createApp } from "../app";
+import { closeAllForTests, getDb } from "../../../server/src/db/connection";
+import { createApp } from "../../../server/src/app";
 import {
   billStats,
   createBill,

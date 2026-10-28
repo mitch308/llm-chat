@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
-import { handleAction } from "./handleAction";
+import { handleAction } from "@llm-chat/features/web";
 
 beforeEach(() => {
   fetchMock.mockReset();

@@ -49,29 +49,3 @@ export async function getMessages(opts: {
   return res.json();
 }
 
-export async function postAction(
-  name: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/actions/${name}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    // 附上服务端错误码（如 OP_EXPIRED），供卡片按语义翻转状态
-    throw Object.assign(
-      new Error((data.message as string) ?? `action failed: ${res.status}`),
-      { code: data.code },
-    );
-  }
-  return data;
-}
-
-export async function getOps(opIds: string[]): Promise<{ items: unknown[] }> {
-  if (opIds.length === 0) return { items: [] };
-  const res = await fetch(`/api/ops?op_ids=${encodeURIComponent(opIds.join(","))}`);
-  if (!res.ok) throw new Error(`getOps failed: ${res.status}`);
-  return res.json();
-}
