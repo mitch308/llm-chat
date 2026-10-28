@@ -79,6 +79,20 @@ describe("op proposal lifecycle", () => {
     expect(s.getOps([p.op_id])[0].status).toBe("expired");
   });
 
+  it("TTL-dead pending is reported as expired by getOps (read paths enforce TTL too)", () => {
+    const s = svc();
+    const p = s.proposeOp("bill_create", { item: "早饭" });
+    clock += 11 * 60 * 1000;
+    expect(s.getOps([p.op_id])[0].status).toBe("expired");
+  });
+
+  it("getPendingSummary hides TTL-dead pending from the system prompt", () => {
+    const s = svc();
+    s.proposeOp("bill_create", { item: "早饭" });
+    clock += 11 * 60 * 1000;
+    expect(s.getPendingSummary()).toBeNull();
+  });
+
   it("new proposal supersedes the pending one", async () => {
     const s = svc();
     const a = s.proposeOp("bill_create", { item: "a" });

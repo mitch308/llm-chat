@@ -58,7 +58,11 @@ export async function postAction(
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    throw new Error((data.message as string) ?? `action failed: ${res.status}`);
+    // 附上服务端错误码（如 OP_EXPIRED），供卡片按语义翻转状态
+    throw Object.assign(
+      new Error((data.message as string) ?? `action failed: ${res.status}`),
+      { code: data.code },
+    );
   }
   return data;
 }

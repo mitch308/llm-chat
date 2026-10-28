@@ -67,7 +67,11 @@ async function confirm() {
     status.value = result.status === "executed" || result.status === "already" ? "saved" : "error";
     if (result.quip) quip.value = result.quip;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "操作失败";
+    // 语义化终态：过期/取消的提议翻转为对应只读态，而非红字错误（按钮随之消失）
+    const code = (e as { code?: string }).code;
+    if (code === "OP_EXPIRED") status.value = "expired";
+    else if (code === "OP_CANCELLED") status.value = "cancelled";
+    else error.value = e instanceof Error ? e.message : "操作失败";
   } finally {
     busy.value = false;
   }

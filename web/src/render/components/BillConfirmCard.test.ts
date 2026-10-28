@@ -122,4 +122,18 @@ describe("BillConfirmCard", () => {
     await flushPromises();
     expect(w.text()).toContain("已保存");
   });
+
+  it("确认返回 OP_EXPIRED → 卡片翻转为已过期态，按钮消失且无红字错误", async () => {
+    vi.mocked(handleAction).mockRejectedValueOnce(
+      Object.assign(new Error("提议已过期，请重新发起"), { code: "OP_EXPIRED" }),
+    );
+
+    const w = mount(BillConfirmCard, { props: baseProps });
+    await w.find("button.confirm").trigger("click");
+    await flushPromises();
+
+    expect(w.text()).toContain("提议已过期");
+    expect(w.find("button.confirm").exists()).toBe(false);
+    expect(w.find(".error").exists()).toBe(false);
+  });
 });

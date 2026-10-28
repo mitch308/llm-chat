@@ -48,6 +48,19 @@ export function createOpsService(
   const now = opts.now ?? (() => new Date());
   const ttlMs = opts.ttlMs ?? TTL_MS;
 
+  /** TTL 已过但尚未被触碰的 pending，对外一律呈现 expired：
+   *  TTL 不只在 executeOp 强制——读路径（卡片状态核对 getOps、系统提示 getPendingSummary）
+   *  同样按 TTL 呈现，避免把死提议喂给模型或让旧卡片保持可点。 */
+  function effectiveStatus(row: OpProposal): OpStatus {
+    if (
+      row.status === "pending" &&
+      now().getTime() - new Date(row.created_at).getTime() > ttlMs
+    ) {
+      return "expired";
+    }
+    return row.status;
+  }
+
   const insert = db.prepare(
     `INSERT INTO op_proposals (op_id, kind, payload_json, status, created_at)
      VALUES (?, ?, ?, 'pending', ?) RETURNING *`,
@@ -115,14 +128,18 @@ export function createOpsService(
     const placeholders = opIds.map(() => "?").join(",");
     return db
       .prepare(`SELECT * FROM op_proposals WHERE op_id IN (${placeholders})`)
-      .all(...opIds) as OpProposal[];
+      .all(...opIds)
+      .map((row) => {
+        const r = row as OpProposal;
+        return { ...r, status: effectiveStatus(r) };
+      });
   }
 
   function getPendingSummary(): string | null {
     const row = db
       .prepare(`SELECT * FROM op_proposals WHERE status = 'pending' ORDER BY created_at DESC`)
       .get() as OpProposal | undefined;
-    if (!row) return null;
+    if (!row || effectiveStatus(row) !== "pending") return null;
     const payload = row.payload_json.slice(0, 100);
     return `pending: ${row.kind} ${payload} ${row.op_id}`;
   }
