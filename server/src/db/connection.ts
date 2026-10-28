@@ -4,7 +4,6 @@ import path from "node:path";
 import { isFts5Enabled, setFts5Enabled } from "@llm-chat/features/server";
 import { ASM } from "../features";
 import { DDL, DDL_FTS } from "./schema";
-import { seedCategories } from "./seeds";
 
 const instances = new Map<string, Database.Database>();
 
@@ -44,7 +43,7 @@ export function getDb(dbPath?: string): Database.Database {
     // FTS5 未编译：检索降级 LIKE，不阻塞启动
     setFts5Enabled(false);
   }
-  seedCategories(db);
+  // 种子经 ASM.seedFns 注入（bills feature 注册 seedCategories）
   for (const run of ASM.seedFns) run(db);
 
   instances.set(resolved, db);

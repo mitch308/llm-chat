@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { Router } from "express";
-import type { Bill } from "../bills/bills.service";
+import type { Bill } from "../../../features/bills/server/bills.service";
 import { createOpsService, OpRunError } from "./ops.service";
 import { attachQuip, attachQuipInBackground, runBillAction, storeResult, type OpAction } from "./ops.executor";
 import { getDefaultLLMClient, type LLMClient } from "../chat/llm";

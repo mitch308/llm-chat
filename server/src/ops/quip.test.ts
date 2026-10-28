@@ -4,7 +4,7 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
-import { createBill } from "../bills/bills.service";
+import { createBill } from "../../../features/bills/server/bills.service";
 import { createFakeLLM, type LLMClient } from "../chat/llm";
 import { generateQuip, QUIP_TIMEOUT_MS } from "./quip";
 import { createOpsService } from "./ops.service";

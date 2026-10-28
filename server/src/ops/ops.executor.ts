@@ -5,7 +5,7 @@ import {
   getBill,
   updateBill,
   type Bill,
-} from "../bills/bills.service";
+} from "../../../features/bills/server/bills.service";
 import { OpRunError, type RunResult } from "./ops.service";
 import { generateQuip } from "./quip";
 import type { LLMClient } from "../chat/llm";

@@ -6,7 +6,7 @@ import { buildContext } from "../chat/context";
 import { createSpecSplitter } from "../chat/streamSplitter";
 import { createOpsService } from "../ops/ops.service";
 import { attachQuipInBackground, runBillAction, storeResult, type OpAction } from "../ops/ops.executor";
-import { billStats, listBills } from "../bills/bills.service";
+import { billStats, listBills } from "../../../features/bills/server/bills.service";
 import { TOOL_DEFS } from "./tools";
 import { createNewsService, type NewsSearchResult, type SearchNewsQuery } from "../news/news.service";
 import { buildSourceFetchers } from "../news/fetchers";
@@ -286,7 +286,7 @@ export async function* runAgent(opts: {
           if (outcome.status === "invalid") {
             return JSON.stringify({ ok: false, error: outcome.message });
           }
-          const data = outcome.data as { bill: import("../bills/bills.service").Bill; deleted?: boolean };
+          const data = outcome.data as { bill: import("../../../features/bills/server/bills.service").Bill; deleted?: boolean };
           // quip 转后台生成补写，工具立即返回（不拖慢回合与卡片对账信号）
           storeResult(db, p.op_id, { bill: data.bill, deleted: data.deleted }, null);
           attachQuipInBackground(db, llm, p.op_id, data.bill);

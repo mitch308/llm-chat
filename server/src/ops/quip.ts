@@ -1,4 +1,4 @@
-import type { Bill } from "../bills/bills.service";
+import type { Bill } from "../../../features/bills/server/bills.service";
 import type { LLMClient } from "../chat/llm";
 
 export interface QuipContext {

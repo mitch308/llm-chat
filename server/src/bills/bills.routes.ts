@@ -7,7 +7,7 @@ import {
   getBill,
   listBills,
   updateBill,
-} from "./bills.service";
+} from "../../../features/bills/server/bills.service";
 
 function bad(res: unknown, message: string): void {
   (res as { status: (n: number) => { json: (b: unknown) => void } })

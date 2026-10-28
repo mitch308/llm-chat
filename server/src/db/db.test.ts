@@ -93,9 +93,11 @@ describe("db layer", () => {
     ]);
   });
 
-  it("空装配不破坏核心 DDL：ASM.ddl 为空且核心表照常创建", () => {
-    // 当前 features/ 无业务目录，ASM 应为空装配：核心 DDL 原样执行
-    expect(ASM.ddl).toEqual([]);
+  it("ASM 装配注入 bills DDL 且核心表照常创建", () => {
+    // bills feature 迁入后 categories/bills DDL 经 ASM.ddl 注入；核心 DDL 原样执行
+    const ddlText = ASM.ddl.join(";\n");
+    expect(ddlText).toContain("CREATE TABLE IF NOT EXISTS categories");
+    expect(ddlText).toContain("CREATE TABLE IF NOT EXISTS bills");
     const db = getDb(tempDbPath());
     const rows = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
