@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { Router } from "express";
 import type { Bill } from "../bills/bills.service";
 import { createOpsService, OpRunError } from "./ops.service";
-import { attachQuip, runBillAction, storeResult, type OpAction } from "./ops.executor";
+import { attachQuip, attachQuipInBackground, runBillAction, storeResult, type OpAction } from "./ops.executor";
 import { getDefaultLLMClient, type LLMClient } from "../chat/llm";
 
 /** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。 */
@@ -77,16 +77,16 @@ export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
         return;
       }
 
-      // executed：生成俏皮话并写回 result_json
+      // executed：quip 转后台生成（实测首 token ~13s，不能阻塞确认响应），完成后补写 result_json
       const data = outcome.data as { bill: Bill; deleted?: boolean };
       const client = llm ?? getDefaultLLMClient();
-      const quip = await attachQuip(db, client, data.bill);
-      storeResult(db, opId, { bill: data.bill, deleted: data.deleted }, quip);
+      storeResult(db, opId, { bill: data.bill, deleted: data.deleted }, null);
+      attachQuipInBackground(db, client, opId, data.bill);
       res.json({
         status: "executed",
         bill: data.bill,
         deleted: data.deleted ?? false,
-        quip,
+        quip: null,
       });
     } catch (err) {
       if (err instanceof OpRunError) {

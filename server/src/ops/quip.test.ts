@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createBill } from "../bills/bills.service";
 import { createFakeLLM, type LLMClient } from "../chat/llm";
-import { generateQuip } from "./quip";
+import { generateQuip, QUIP_TIMEOUT_MS } from "./quip";
+import { createOpsService } from "./ops.service";
+import { attachQuipInBackground } from "./ops.executor";
 
 let dirs: string[] = [];
 let db: Database.Database;
@@ -45,7 +47,7 @@ describe("generateQuip", () => {
     await expect(generateQuip(makeCtx(), llm)).resolves.toBe("吃的比穿的多🍜");
   });
 
-  it("returns null when the LLM hangs past 5s", async () => {
+  it("returns null when the LLM hangs past the timeout", async () => {
     vi.useFakeTimers();
     try {
       const hang: LLMClient = {
@@ -54,7 +56,7 @@ describe("generateQuip", () => {
         },
       };
       const p = generateQuip(makeCtx(), hang);
-      await vi.advanceTimersByTimeAsync(5100);
+      await vi.advanceTimersByTimeAsync(QUIP_TIMEOUT_MS + 100);
       await expect(p).resolves.toBeNull();
     } finally {
       vi.useRealTimers();
@@ -81,5 +83,28 @@ describe("generateQuip", () => {
   it("returns null for empty output", async () => {
     const llm = createFakeLLM([[{ type: "text", delta: "   " }]]);
     await expect(generateQuip(makeCtx(), llm)).resolves.toBeNull();
+  });
+});
+
+describe("attachQuipInBackground", () => {
+  it("不阻塞地把 quip 异步补写进 result_json（回归：5s 超时掐死生成）", async () => {
+    const ops = createOpsService(db);
+    const p = ops.proposeOp("bill_create", { amount_yuan: 68, item: "寿司放题" });
+    await ops.executeOp(p.op_id, async () => ({ ok: true, data: { bill } }));
+    // 初始落库无 quip 键
+    expect(JSON.parse(ops.getOps([p.op_id])[0].result_json!).quip).toBeUndefined();
+
+    attachQuipInBackground(
+      db,
+      createFakeLLM([[{ type: "text", delta: "记好啦🍜" }]]),
+      p.op_id,
+      bill,
+    );
+    await vi.waitFor(() => {
+      const row = ops.getOps([p.op_id])[0];
+      expect(JSON.parse(row.result_json!).quip).toBe("记好啦🍜");
+      // data 载荷保留不被覆盖
+      expect(JSON.parse(row.result_json!).data.bill.item).toBe(bill.item);
+    });
   });
 });

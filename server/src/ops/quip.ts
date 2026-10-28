@@ -9,7 +9,9 @@ export interface QuipContext {
 }
 
 const QUIP_MAX_CHARS = 30;
-const QUIP_TIMEOUT_MS = 5000;
+/** 实测 glm-5.3-flash 首 token 可达 ~13s（2026-10-28），5s 会掐死每次生成；
+ *  quip 已改为后台异步补写，不再阻塞任何用户路径，超时放宽到 15s。 */
+export const QUIP_TIMEOUT_MS = 15000;
 
 const SYSTEM = `你是记账 App 的吐槽小助手。根据给到的真实统计数据，对用户刚记的这笔账回一句俏皮话。
 规则：

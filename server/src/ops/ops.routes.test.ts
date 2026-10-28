@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createApp } from "../app";
 import { createFakeLLM } from "../chat/llm";
@@ -47,12 +47,15 @@ describe("POST /api/actions/:name", () => {
     expect(res.body.bill.amount_cents).toBe(20000);
     expect(res.body.bill.categoryName).toBe("衣服");
     expect(res.body.bill.parentName).toBe("服饰");
-    expect(res.body.quip).toBe("吃的比穿的多🍜");
+    // quip 后台异步生成，响应不阻塞（回归：5s 超时掐死生成）
+    expect(res.body.quip).toBeNull();
     expect(countBills()).toBe(1);
 
-    // quip 已写回 result_json
-    const row = createOpsService(db).getOps([p.op_id])[0];
-    expect(row.result_json).toContain("吃的比穿的多");
+    // 后台生成后补写进 result_json
+    await vi.waitFor(async () => {
+      const row = createOpsService(db).getOps([p.op_id])[0];
+      expect(row.result_json).toContain("吃的比穿的多");
+    });
   });
 
   it("replaying the same op_id returns already and writes nothing new", async () => {
@@ -66,6 +69,12 @@ describe("POST /api/actions/:name", () => {
     });
 
     const first = await request(app).post("/api/actions/bill_create").send({ op_id: p.op_id });
+    expect(first.body.status).toBe("executed");
+    // 等后台 quip 补写完成，再重放：already 返回存储的 quip
+    await vi.waitFor(() => {
+      expect(createOpsService(db).getOps([p.op_id])[0].result_json).toContain("吃的比穿的多");
+    });
+
     const second = await request(app).post("/api/actions/bill_create").send({ op_id: p.op_id });
 
     expect(second.status).toBe(200);

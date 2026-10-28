@@ -188,4 +188,34 @@ describe("BillConfirmCard", () => {
     expect(w.find("button.confirm").exists()).toBe(false);
     expect(w.text()).toContain("已取消");
   });
+
+  it("保存后 quip 未就绪 → 延迟对账补齐（回归：quip 后台异步生成）", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getOps).mockResolvedValue({ items: [] });
+      vi.mocked(handleAction).mockResolvedValue({
+        status: "executed",
+        bill: { id: 9 },
+        deleted: false,
+        quip: null, // quip 转后台生成，响应先不带
+      } as never);
+
+      const w = mount(BillConfirmCard, { props: baseProps });
+      await flushPromises();
+      await w.find("button.confirm").trigger("click");
+      await flushPromises();
+      expect(w.text()).toContain("已保存");
+      expect(w.text()).not.toContain("💬");
+
+      // 后台生成完成：4s 后的延迟对账补齐 quip
+      vi.mocked(getOps).mockResolvedValue({
+        items: [{ status: "executed", result_json: JSON.stringify({ quip: "记好啦🍜" }) }],
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(w.text()).toContain("记好啦🍜");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

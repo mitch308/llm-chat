@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { getOps } from "../../api/client";
 import { handleAction } from "../../actions/handleAction";
 import { useOpsSync } from "../../actions/opsSync";
@@ -31,26 +31,52 @@ const quip = ref<string | null>(props.quip ?? null);
 const error = ref<string | null>(null);
 const busy = ref(false);
 
-/** 向服务端核对真实状态：pending 卡片挂载时与每轮对话结束（对账信号）各核对一次。
- *  文字"确认"路径由服务端 execute_op 落库，卡片没有按钮点击，只能主动对账翻转。 */
+/** 向服务端核对真实状态：pending 卡片挂载/对账信号时翻转状态；
+ *  saved 态缺 quip（后台异步生成，实测 ~13s）时延迟对账补齐。 */
+let quipPollTimer: ReturnType<typeof setTimeout> | null = null;
+let quipPolls = 0;
+
+function scheduleQuipPoll(): void {
+  if (quip.value || status.value !== "saved" || quipPolls >= 3) return;
+  quipPolls += 1;
+  quipPollTimer = setTimeout(() => {
+    void recheck();
+  }, 4000 * quipPolls);
+}
+
+interface OpStatusPayload {
+  status?: string;
+  result_json?: string | null;
+}
+
+function applyRecheck(real: OpStatusPayload): void {
+  let incomingQuip: string | null = null;
+  if (real.result_json) {
+    try {
+      const parsed = JSON.parse(real.result_json) as { quip?: string | null };
+      incomingQuip = parsed.quip ?? null;
+    } catch {
+      // result_json 解析失败：仅丢 quip
+    }
+  }
+  if (status.value === "pending") {
+    if (real.status && real.status !== "pending") {
+      status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
+      if (incomingQuip) quip.value = incomingQuip;
+    }
+  } else if (status.value === "saved" && !quip.value && incomingQuip) {
+    quip.value = incomingQuip;
+  }
+}
+
 async function recheck(): Promise<void> {
-  if (status.value !== "pending") return;
+  // pending：状态可能翻转；saved 且无 quip：可能后台 quip 已生成；其余无需请求
+  if (status.value !== "pending" && !(status.value === "saved" && !quip.value)) return;
   try {
     const { items } = await getOps([props.op_id]);
-    const real = items[0] as
-      | { status?: string; result_json?: string | null }
-      | undefined;
-    if (real?.status && real.status !== "pending") {
-      status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
-      if (real.status === "executed" && real.result_json) {
-        try {
-          const parsed = JSON.parse(real.result_json) as { quip?: string | null };
-          if (parsed.quip) quip.value = parsed.quip;
-        } catch {
-          // result_json 解析失败：仅恢复状态
-        }
-      }
-    }
+    const real = items[0] as OpStatusPayload | undefined;
+    if (real) applyRecheck(real);
+    scheduleQuipPoll();
   } catch {
     // 状态查询失败：保持本地态
   }
@@ -67,6 +93,10 @@ if (opsSync) {
   });
 }
 
+onUnmounted(() => {
+  if (quipPollTimer) clearTimeout(quipPollTimer);
+});
+
 const actionName =
   props.kind === "bill_update" || props.kind === "bill_delete" ? props.kind : "bill_create";
 
@@ -78,6 +108,7 @@ async function confirm() {
     const result = await handleAction(actionName, { op_id: props.op_id });
     status.value = result.status === "executed" || result.status === "already" ? "saved" : "error";
     if (result.quip) quip.value = result.quip;
+    scheduleQuipPoll();
   } catch (e) {
     // 语义化终态：过期/取消的提议翻转为对应只读态，而非红字错误（按钮随之消失）
     const code = (e as { code?: string }).code;
