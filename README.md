@@ -52,7 +52,7 @@ pnpm -r test
 3. **一致性断言**：`features/kernel/consistency.test.ts` 与 `web/src/render/registry.test.ts` 的清单并集断言里加上你的 `*_COMPONENTS`（有动作则同时加 consistency 的动作断言）
 4. **测试门禁**：`pnpm -r test` 全绿 + `cd web && npx vite build` 成功
 
-删除一个 feature = 删目录 + 清掉两处一致性断言里的清单引用；漏清会得到可预期的断言失败（清单并集多出已删组件），不会静默丢失。
+删除一个 feature = 把目录移出 `features/` 或整体删除（在 features/ 内改名不会移除——扫描只看目录内是否含 `server/index.ts`）+ 清掉两处一致性断言里的清单引用；漏清会得到守卫测试的模块收集错误（Cannot find module；新增漏加清单则是并集断言失败），不会静默丢失。
 
 ## 验收清单（spec 第 14 节）
 

@@ -58,7 +58,7 @@ feature 的 `web/index.ts` default 导出 `defineWebFeature(name, register)`，�
 - 模块加载时扫描仓库根 `features/`：**凡含 `server/index.ts` 的子目录即一个 feature**；
 - 目录名**排序后**逐个动态导入取 default 导出（`scanServerFeatures`），顺序确定性 = DDL 顺序、技能顺序、工具清单顺序的保证（当前 bills < news < shared）；
 - `assembleServerFeatures` 按序调用各 register，汇总为 `AssembledServer`（ddl/ddlOptional/seedFns/routers/tools/catalog/skills/ops）；
-- 删除或改名一个 feature 目录即把它从装配中移除，**无需改任何核心文件**。
+- 将 feature 目录**移出 `features/`（或整体删除）**即把它从装配中移除，**无需改任何核心文件**；注意**在 features/ 内改名不会移除**——扫描只看目录内是否含 `server/index.ts`（如 `news` → `news.bak` 仍会被装配）。
 
 ### 4.2 web 侧：glob + 顶层 await（`web/src/render/registry.ts`）
 
@@ -100,7 +100,7 @@ interface OpHandler {
 
 **新增**：① 建目录 `features/<名>/{shared.ts, server/, web/}`，两侧 index.ts default 导出 define*Feature 并经 ctx 注册全部贡献物；② server/web 无需接线——扫描与 glob 自动生效；③ 在 `features/kernel/consistency.test.ts` 与 `web/src/render/registry.test.ts` 的清单并集断言里加上你的 `*_COMPONENTS`（有动作则加 consistency 的动作断言）；④ 跑三套测试（`pnpm -r test`）+ `cd web && npx vite build`。
 
-**删除**：① 删/改名目录（装配即移除，核心无需改）；② 清掉两处一致性测试里对该 feature 清单的引用；③ 全量测试确认绿。漏做第②步会得到**可预期的断言失败**（清单并集多出已删组件），不会静默丢失。
+**删除**：① 将目录移出 `features/` 或整体删除（装配即移除，核心无需改；**features/ 内改名不会移除**——扫描只看目录内是否含 `server/index.ts`）；② 清掉两处一致性测试里对该 feature 清单的引用；③ 全量测试确认绿。漏做第②步：守卫测试对已删 `shared.ts` 的静态 import 直接产生**模块收集错误**（`Cannot find module '../news/shared'），比断言更早、同样响亮，不会静默丢失。区分：**新增** feature 漏加清单才会以并集断言失败的形态暴露（两侧集合不等）——两种方向都有守卫接住。
 
 ## 8. 约束
 
