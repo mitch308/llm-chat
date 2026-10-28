@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import { BILL_ACTIONS, BILL_COMPONENTS } from "../bills/shared";
 import { NEWS_COMPONENTS } from "../news/shared";
 import { SHARED_COMPONENTS } from "../shared/shared";
-import { assembleServerFeatures, scanServerFeatures } from "./server";
-
-/** 与 server/src/features.ts 同源的装配：扫描 features/ 实目录组装（目录名排序 = 注册顺序）。 */
-const ASM = assembleServerFeatures(
-  await scanServerFeatures(new URL("../", import.meta.url)),
-);
+// 生产装配单源：直接 import server/src/features 的 ASM，消除测试自建装配的漂移面
+import { ASM } from "../../server/src/features";
 
 describe("ASM catalog 一致性（server 侧）", () => {
   it("组件键集合 == BILL ∪ NEWS ∪ SHARED 三份清单的并集", () => {

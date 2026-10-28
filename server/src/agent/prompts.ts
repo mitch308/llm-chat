@@ -8,7 +8,7 @@ import { ASM } from "../features";
  */
 export function composeSkillsPrompt(skills: SkillSection[]): string {
   const n = skills.length + 1;
-  const routes = skills.map((s, i) => `${i + 1}. ${s.intent}→ 走【${s.label}】`);
+  const routes = skills.map((s, i) => `${i + 1}. ${s.intent} → 走【${s.label}】`);
   const hints = skills.map((s) => s.hint);
   return `# 技能路由
 

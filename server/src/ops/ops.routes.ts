@@ -72,8 +72,8 @@ export function opsRoutes(
         const stored = readOpResult(db, opId);
         const data = (stored.data ?? {}) as Record<string, unknown>;
         res.json({
-          status: "already",
           ...data,
+          status: "already",
           deleted: data.deleted ?? false,
           quip: stored.quip ?? null,
         });
@@ -84,8 +84,8 @@ export function opsRoutes(
       const data = outcome.data as Record<string, unknown>;
       handler.afterExecute?.({ db, llm: llm ?? getDefaultLLMClient(), opId }, data);
       res.json({
-        status: "executed",
         ...data,
+        status: "executed",
         deleted: data.deleted ?? false,
         quip: null,
       });

@@ -7,7 +7,7 @@ import type Database from "better-sqlite3";
 import type { Router } from "express";
 import { z, type ZodType } from "zod";
 
-// ---- 与 server/src/chat/llm.ts 结构一致的 wire 类型（kernel 为唯一权威，llm.ts 改为 re-export）----
+// ---- wire 类型唯一定义处（server/src/chat/llm.ts 从此处 re-export 以兼容旧导入路径）----
 
 /** 模型侧工具调用（arguments 为 JSON 字符串）。 */
 export interface ToolCall {
@@ -90,7 +90,8 @@ export interface ServerFeatureContext {
   ddl(stmt: string | string[]): void;
   ddlOptional(stmt: string): void; // 执行失败仅记录（FTS5 降级）
   seed(run: (db: Database.Database) => void): void;
-  route(fn: (db: Database.Database) => Router): void;
+  // llm 为可选线程：需要模型能力的 REST 路由（如 news 的翻译/摘要）经此透传给 service
+  route(fn: (db: Database.Database, llm?: LLMClient) => Router): void;
   tool(
     def: ToolDef,
     opts: {
@@ -113,7 +114,7 @@ export interface AssembledServer {
   ddl: string[];
   ddlOptional: string[];
   seedFns: ((db: Database.Database) => void)[];
-  routers: ((db: Database.Database) => Router)[];
+  routers: ((db: Database.Database, llm?: LLMClient) => Router)[];
   tools: Map<string, ToolEntry>;
   catalog: ReturnType<typeof defineCatalog>; // defineCatalog(schema, {components, actions}) 的合并结果
   skills: SkillSection[];
@@ -148,7 +149,7 @@ export function assembleServerFeatures(features: ServerFeature[]): AssembledServ
   const ddl: string[] = [];
   const ddlOptional: string[] = [];
   const seedFns: ((db: Database.Database) => void)[] = [];
-  const routers: ((db: Database.Database) => Router)[] = [];
+  const routers: ((db: Database.Database, llm?: LLMClient) => Router)[] = [];
   const tools = new Map<string, ToolEntry>();
   const components: Record<string, CatalogComponentDef> = {};
   const actions: Record<string, CatalogActionDef> = {

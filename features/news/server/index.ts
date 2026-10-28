@@ -72,5 +72,5 @@ export default defineServerFeature("news", (ctx) => {
     schema: searchNewsTool.schema,
     execute: searchNewsTool.execute,
   });
-  ctx.route((db) => newsRoutes(db));
+  ctx.route((db, llm) => newsRoutes(db, llm));
 });

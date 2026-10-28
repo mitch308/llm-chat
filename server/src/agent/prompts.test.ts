@@ -57,7 +57,7 @@ describe("composeSkillsPrompt", () => {
   it("单 skill → 只允许以下2类结果，fallback 行含该 skill 的 hint", () => {
     const p = composeSkillsPrompt([mkSkill({ hint: "🧪测试（演示）" })]);
     expect(p).toContain("只允许以下2类结果");
-    expect(p).toContain("1. 测试意图→ 走【测试技能】");
+    expect(p).toContain("1. 测试意图 → 走【测试技能】");
     expect(p).toContain("2. 其他一切（包括问候、闲聊、订机票等）→ 只回复：");
     expect(p).toContain("暂不支持该功能，目前支持：🧪测试（演示）");
     expect(p).toContain("# 测试技能"); // body 原样拼接
@@ -77,8 +77,8 @@ describe("composeSkillsPrompt", () => {
       }),
     ]);
     expect(p).toContain("只允许以下3类结果");
-    expect(p).toContain("1. 记账意图（记录/查询/修改/删除账单）→ 走【记账技能】");
-    expect(p).toContain("2. 新闻意图（关键词搜索/热点浏览/指定来源）→ 走【新闻技能】");
+    expect(p).toContain("1. 记账意图（记录/查询/修改/删除账单） → 走【记账技能】");
+    expect(p).toContain("2. 新闻意图（关键词搜索/热点浏览/指定来源） → 走【新闻技能】");
     expect(p).toContain(
       "暂不支持该功能，目前支持：📝记账（记录/查询/修改/删除）、📰新闻（关键词搜索/热点浏览）",
     );
