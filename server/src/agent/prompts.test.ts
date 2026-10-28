@@ -7,7 +7,6 @@ import { closeAllForTests, getDb } from "../db/connection";
 import { ASM } from "../features";
 import type { SkillSection } from "@llm-chat/features/server";
 import { SKILLS_PROMPT, CATALOG_PROMPT, composeSkillsPrompt } from "./prompts";
-import { TOOL_DEFS } from "./tools";
 import { buildContext } from "../chat/context";
 import { createOpsService } from "../ops/ops.service";
 
@@ -118,26 +117,6 @@ describe("CATALOG_PROMPT", () => {
     };
     const result = catalog.validate(spec) as { success: boolean; error?: unknown };
     expect(result.success).toBe(true);
-  });
-});
-
-describe("TOOL_DEFS", () => {
-  it("defines the five tools with propose_op payload conventions", () => {
-    const names = TOOL_DEFS.map((t) => t.function.name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "query_bills",
-        "bills_stats",
-        "propose_op",
-        "execute_op",
-        "search_news",
-      ]),
-    );
-    const propose = TOOL_DEFS.find((t) => t.function.name === "propose_op")!;
-    const props = propose.function.parameters.properties as Record<string, unknown>;
-    const payload = props.payload as { properties: Record<string, { type?: string }> };
-    expect(payload.properties.amount_yuan.type).toBe("number");
-    expect(payload.properties.category.type).toBe("string");
   });
 });
 

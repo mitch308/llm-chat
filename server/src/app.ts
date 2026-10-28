@@ -2,9 +2,7 @@ import express, { type Express } from "express";
 import type Database from "better-sqlite3";
 import { messagesRoutes } from "./messages/messages.routes";
 import { chatRoutes } from "./chat/chat.routes";
-import { billsRoutes } from "./bills/bills.routes";
 import { opsRoutes } from "./ops/ops.routes";
-import { newsRoutes } from "./news/news.routes";
 import type { LLMClient } from "./chat/llm";
 import { ASM } from "./features";
 
@@ -18,11 +16,9 @@ export function createApp({ db, llm }: AppDeps): Express {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", messagesRoutes(db));
-  app.use("/api", billsRoutes(db));
   app.use("/api", opsRoutes(db, llm));
-  app.use("/api", newsRoutes(db, llm));
   app.use("/api", chatRoutes(db, llm));
-  // feature 路由最后挂载（当前空装配为 no-op；静态路由迁入 feature 后由此接管）
+  // feature 贡献的 REST 路由（bills/news）经 ASM 动态挂载
   for (const routeFactory of ASM.routers) app.use("/api", routeFactory(db));
   return app;
 }

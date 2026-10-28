@@ -7,6 +7,8 @@ import { closeAllForTests, getDb } from "../db/connection";
 import { createMessagesService } from "../messages/messages.service";
 import { createOpsService } from "../ops/ops.service";
 import type { Delta, LLMClient } from "../chat/llm";
+import { ASM } from "../features";
+import type { ToolEntry } from "@llm-chat/features/server";
 import { runAgent, type AgentEvent } from "./agent";
 
 let dirs: string[] = [];
@@ -49,6 +51,38 @@ function pendingOp(): { op_id: string; payload_json: string } | undefined {
   return db
     .prepare(`SELECT op_id, payload_json FROM op_proposals WHERE status='pending'`)
     .get() as { op_id: string; payload_json: string } | undefined;
+}
+
+/** 克隆 ASM.tools 并把 search_news 的执行体换成 fake（替代原 newsSearch 注入位）。
+ *  入参→查询的映射与回喂 JSON 形状照抄真实执行体，fake 只接管检索本身。 */
+function withSearchNews(fake: (q: unknown) => Promise<unknown>): Map<string, ToolEntry> {
+  const tools = new Map(ASM.tools);
+  const entry = tools.get("search_news")!;
+  tools.set("search_news", {
+    ...entry,
+    execute: async (args) => {
+      const n = args as {
+        keywords?: string[];
+        mode?: string;
+        source?: string;
+        from?: string;
+        to?: string;
+        limit?: number;
+      };
+      const keywords = n.keywords ?? [];
+      const mode = n.mode === "hot" ? "hot" : keywords.length > 0 ? "keyword" : "hot";
+      try {
+        const result = await fake({ keywords, mode, source: n.source, from: n.from, to: n.to, limit: n.limit });
+        return JSON.stringify({ ok: true, ...(result as object) });
+      } catch (err) {
+        return JSON.stringify({
+          ok: false,
+          error: err instanceof Error ? err.message : "新闻查询失败",
+        });
+      }
+    },
+  });
+  return tools;
 }
 
 describe("runAgent", () => {
@@ -508,7 +542,7 @@ describe("runAgent", () => {
     });
 
     const events: AgentEvent[] = [];
-    for await (const ev of runAgent({ db, llm, content: "查AI新闻", newsSearch: newsSearch as never })) {
+    for await (const ev of runAgent({ db, llm, content: "查AI新闻", tools: withSearchNews(newsSearch) })) {
       events.push(ev);
     }
 

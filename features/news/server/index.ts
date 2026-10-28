@@ -1,5 +1,7 @@
 import { defineServerFeature } from "@llm-chat/features/server";
 import { NEWS_COMPONENTS, NewsItemProps, NewsListProps } from "../shared";
+import { newsRoutes } from "./news.routes";
+import { searchNewsTool } from "./tools";
 
 /**
  * 新闻技能 body：原 server/src/agent/prompts.ts 的「# 新闻技能」段逐字迁移。
@@ -13,7 +15,7 @@ const NEWS_SKILL_BODY = `# 新闻技能
 5. 空结果 → 文字建议换关键词或看热点榜；某来源不可用 → 文字说明并展示其余来源
 6. 历史区间：只有 Hacker News 和 The Guardian 支持历史日期查询，其余仅近期（约3-7天）。超出支持范围的来源会被跳过并在回答中注明；全部不支持 → 回复不支持该时间范围并说明各来源支持范围`;
 
-/** news feature：数据层（DDL/FTS 降级）+ 组件目录 + 新闻技能提示词。 */
+/** news feature：数据层（DDL/FTS 降级）+ 组件目录 + 新闻技能提示词 + 工具与 REST 路由。 */
 export default defineServerFeature("news", (ctx) => {
   ctx.ddl([
     `CREATE TABLE IF NOT EXISTS news_items (
@@ -64,4 +66,11 @@ export default defineServerFeature("news", (ctx) => {
     hint: "📰新闻（关键词搜索/热点浏览）",
     body: NEWS_SKILL_BODY,
   });
+
+  // 工具（def/schema/执行体自原 server/src/agent 逐字迁移）与 REST 路由（原 server/src/news 平移）
+  ctx.tool(searchNewsTool.def, {
+    schema: searchNewsTool.schema,
+    execute: searchNewsTool.execute,
+  });
+  ctx.route((db) => newsRoutes(db));
 });

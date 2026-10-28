@@ -10,6 +10,9 @@ import { OpRunError, type RunResult } from "./ops.service";
 import { generateQuip } from "./quip";
 import type { LLMClient } from "../chat/llm";
 
+// agent.ts 不再直接引用 feature 树，Bill 类型经此处转发（Task 7 统一迁入注册表）
+export type { Bill };
+
 export type OpAction = "bill_create" | "bill_update" | "bill_delete";
 
 /** 类目名 → 叶子 id：叶子直接用；父类优先匹配 item 中出现的叶子名，否则第一个叶子。 */

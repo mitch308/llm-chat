@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { defineServerFeature } from "@llm-chat/features/server";
 import { seedCategories } from "./seeds";
+import { billsRoutes } from "./bills.routes";
+import { billsStatsTool, queryBillsTool } from "./tools";
 import {
   BILL_ACTIONS,
   BILL_COMPONENTS,
@@ -39,7 +41,7 @@ const BILL_SKILL_BODY = `- 金额支持 元/块/万元 表达，amount_yuan 用�
 2. 单笔 → 调 propose_op(kind="bill_update"/"bill_delete")，BillConfirmCard 必须带 kind="bill_update"/"bill_delete"（与提议一致），diff 展示 变更前→变更后（删除则展示将删除的记录）
 3. 确认与幂等同记录流程；确认按钮会按提议的 kind 执行，kind 不一致会被服务端拒绝`;
 
-/** bills feature：数据层（DDL/种子）+ 组件/动作目录 + 记账技能提示词。 */
+/** bills feature：数据层（DDL/种子）+ 组件/动作目录 + 记账技能提示词 + 工具与 REST 路由。 */
 export default defineServerFeature("bills", (ctx) => {
   ctx.ddl([
     `CREATE TABLE IF NOT EXISTS categories (
@@ -103,4 +105,15 @@ export default defineServerFeature("bills", (ctx) => {
     hint: "📝记账（记录/查询/修改/删除）",
     body: BILL_SKILL_BODY,
   });
+
+  // 工具（def/schema/执行体自原 server/src/agent 逐字迁移）与 REST 路由（原 server/src/bills 平移）
+  ctx.tool(queryBillsTool.def, {
+    schema: queryBillsTool.schema,
+    execute: queryBillsTool.execute,
+  });
+  ctx.tool(billsStatsTool.def, {
+    schema: billsStatsTool.schema,
+    execute: billsStatsTool.execute,
+  });
+  ctx.route((db) => billsRoutes(db));
 });
