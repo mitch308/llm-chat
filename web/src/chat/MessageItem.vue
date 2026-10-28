@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Renderer, StateProvider, VisibilityProvider } from "@json-render/vue";
+import {
+  ActionProvider,
+  Renderer,
+  StateProvider,
+  VisibilityProvider,
+} from "@json-render/vue";
 import { registry } from "../render/registry";
 import { linesToSpec } from "../render/specCompile";
 import type { ChatMsg } from "./types";
@@ -19,7 +24,9 @@ const spec = computed(() =>
       <div v-if="msg.specLines.length" class="rendered-ui">
         <StateProvider>
           <VisibilityProvider>
-            <Renderer v-if="spec" :spec="spec" :registry="registry" />
+            <ActionProvider>
+              <Renderer v-if="spec" :spec="spec" :registry="registry" />
+            </ActionProvider>
           </VisibilityProvider>
         </StateProvider>
       </div>

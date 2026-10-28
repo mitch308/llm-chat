@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useVirtualList } from "@vueuse/core";
 import type { ChatMsg } from "./types";
 import { estimateItemHeight } from "./heights";
@@ -9,9 +9,15 @@ const props = defineProps<{ messages: ChatMsg[]; loadingOlder: boolean }>();
 const emit = defineEmits<{ (e: "load-older"): void }>();
 
 const containerRef = ref<HTMLElement | null>(null);
-const { list, containerProps, wrapperProps } = useVirtualList(() => props.messages, {
+// 注意：@vueuse/core 15 的 useVirtualList 不对 list 做 toValue，只接受数组或 ref
+// （shallowRef(getter) 会把函数本身当 source）——必须传 computed，不能传裸 getter
+const messagesRef = computed(() => props.messages);
+const { list, containerProps, wrapperProps } = useVirtualList(messagesRef, {
   // I7：按内容估算高度，替代固定 88px（长文/卡片/图表差异巨大）
-  itemHeight: (index: number) => estimateItemHeight(props.messages[index] ?? { role: "user", text: "", specLines: [] }),
+  itemHeight: (index: number) =>
+    estimateItemHeight(
+      messagesRef.value[index] ?? { role: "user", text: "", specLines: [] },
+    ),
   overscan: 8,
 });
 
@@ -70,12 +76,7 @@ watch(
 
 <template>
   <div class="message-list">
-    <div
-      v-bind="containerProps"
-      ref="containerRef"
-      class="scroll-container"
-      @scroll.passive="onScroll"
-    >
+    <div v-bind="containerProps" class="scroll-container" @scroll.passive="onScroll">
       <div v-bind="wrapperProps">
         <div v-for="{ data, index } in list" :key="data.id ?? `i-${index}`" class="row">
           <MessageItem :msg="data" />
