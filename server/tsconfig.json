@@ -11,5 +11,10 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "../features/kernel/*.ts",
+    "../features/*/server/**/*.ts",
+    "../features/*/shared.ts"
+  ]
 }

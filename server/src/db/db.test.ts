@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ASM } from "../features";
 import { getDb, getFts5Enabled, closeAllForTests, closeDb } from "./connection";
 
 let dirs: string[] = [];
@@ -90,6 +91,18 @@ describe("db layer", () => {
       "打车",
       "火车机票",
     ]);
+  });
+
+  it("空装配不破坏核心 DDL：ASM.ddl 为空且核心表照常创建", () => {
+    // 当前 features/ 无业务目录，ASM 应为空装配：核心 DDL 原样执行
+    expect(ASM.ddl).toEqual([]);
+    const db = getDb(tempDbPath());
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all() as { name: string }[];
+    const names = rows.map((r) => r.name);
+    expect(names).toContain("messages");
+    expect(names).toContain("op_proposals");
   });
 
   it("reports fts5 availability and creates news_fts when enabled", () => {

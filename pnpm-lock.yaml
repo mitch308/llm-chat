@@ -117,6 +117,9 @@ importers:
       '@json-render/vue':
         specifier: ^0.21.3
         version: 0.21.3(vue@3.5.44(typescript@5.9.3))(zod@4.6.7)
+      '@llm-chat/features':
+        specifier: workspace:*
+        version: link:../features
       '@vueuse/core':
         specifier: ^15.0.0
         version: 15.0.0(vue@3.5.44(typescript@5.9.3))

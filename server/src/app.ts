@@ -6,6 +6,7 @@ import { billsRoutes } from "./bills/bills.routes";
 import { opsRoutes } from "./ops/ops.routes";
 import { newsRoutes } from "./news/news.routes";
 import type { LLMClient } from "./chat/llm";
+import { ASM } from "./features";
 
 export interface AppDeps {
   db: Database.Database;
@@ -21,5 +22,7 @@ export function createApp({ db, llm }: AppDeps): Express {
   app.use("/api", opsRoutes(db, llm));
   app.use("/api", newsRoutes(db, llm));
   app.use("/api", chatRoutes(db, llm));
+  // feature 路由最后挂载（当前空装配为 no-op；静态路由迁入 feature 后由此接管）
+  for (const routeFactory of ASM.routers) app.use("/api", routeFactory(db));
   return app;
 }
