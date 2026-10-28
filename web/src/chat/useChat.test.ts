@@ -205,5 +205,18 @@ describe("useChat", () => {
     expect(seen).toContain("正在检索新闻…");
     expect(messages.value[1].status).toBeUndefined();
   });
+
+  it("done 事件触发 onTurnDone 回调（供 pending 卡片对账翻转）", async () => {
+    vi.mocked(streamChat).mockImplementation(async (_c, onEvent) => {
+      onEvent({ type: "text", delta: "已保存" });
+      onEvent({ type: "done", message: { id: 7 } });
+    });
+    const onTurnDone = vi.fn();
+    const chat = useChat({ onTurnDone });
+
+    await chat.send("确认");
+
+    expect(onTurnDone).toHaveBeenCalledTimes(1);
+  });
 });
 

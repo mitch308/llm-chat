@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { useChat } from "./useChat";
+import { provideOpsSync } from "../actions/opsSync";
 import MessageList from "./MessageList.vue";
 import ChatInput from "./ChatInput.vue";
 
-const { messages, streaming, send, stop, loadOlder, loadingOlder } = useChat();
+// 每轮对话结束自增：pending 卡片借此向服务端对账（文字"确认"路径无按钮点击）
+const opsSync = provideOpsSync();
+const { messages, streaming, send, stop, loadOlder, loadingOlder } = useChat({
+  onTurnDone: () => {
+    opsSync.value += 1;
+  },
+});
 </script>
 
 <template>

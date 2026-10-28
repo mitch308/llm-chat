@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { getOps } from "../../api/client";
 import { handleAction } from "../../actions/handleAction";
+import { useOpsSync } from "../../actions/opsSync";
 
 type CardStatus = "pending" | "saved" | "executed" | "cancelled" | "expired" | "error";
 
@@ -30,30 +31,41 @@ const quip = ref<string | null>(props.quip ?? null);
 const error = ref<string | null>(null);
 const busy = ref(false);
 
-onMounted(async () => {
-  // 历史重现：pending 卡片向服务端核对真实状态；executed 恢复 quip（I6）
-  if (status.value === "pending") {
-    try {
-      const { items } = await getOps([props.op_id]);
-      const real = items[0] as
-        | { status?: string; result_json?: string | null }
-        | undefined;
-      if (real?.status && real.status !== "pending") {
-        status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
-        if (real.status === "executed" && real.result_json) {
-          try {
-            const parsed = JSON.parse(real.result_json) as { quip?: string | null };
-            if (parsed.quip) quip.value = parsed.quip;
-          } catch {
-            // result_json 解析失败：仅恢复状态
-          }
+/** 向服务端核对真实状态：pending 卡片挂载时与每轮对话结束（对账信号）各核对一次。
+ *  文字"确认"路径由服务端 execute_op 落库，卡片没有按钮点击，只能主动对账翻转。 */
+async function recheck(): Promise<void> {
+  if (status.value !== "pending") return;
+  try {
+    const { items } = await getOps([props.op_id]);
+    const real = items[0] as
+      | { status?: string; result_json?: string | null }
+      | undefined;
+    if (real?.status && real.status !== "pending") {
+      status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
+      if (real.status === "executed" && real.result_json) {
+        try {
+          const parsed = JSON.parse(real.result_json) as { quip?: string | null };
+          if (parsed.quip) quip.value = parsed.quip;
+        } catch {
+          // result_json 解析失败：仅恢复状态
         }
       }
-    } catch {
-      // 状态查询失败：保持本地态
     }
+  } catch {
+    // 状态查询失败：保持本地态
   }
+}
+
+onMounted(() => {
+  void recheck();
 });
+
+const opsSync = useOpsSync();
+if (opsSync) {
+  watch(opsSync, () => {
+    void recheck();
+  });
+}
 
 const actionName =
   props.kind === "bill_update" || props.kind === "bill_delete" ? props.kind : "bill_create";

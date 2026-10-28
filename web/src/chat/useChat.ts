@@ -16,7 +16,10 @@ const TOOL_STATUS: Record<string, string> = {
  * 单一消息源：history 的 100 条滑动窗口 + 会话内新增的 live 尾巴。
  * 两者拼接展示，互不覆盖（历史翻页不影响新消息，新消息不重置历史）。
  */
-export function useChat(): {
+export function useChat(opts?: {
+  /** 服务端 done（本轮落库完成）时回调：供 pending 卡片触发对账翻转 */
+  onTurnDone?: () => void;
+}): {
   messages: Ref<ChatMsg[]>;
   streaming: Ref<boolean>;
   send: (text: string) => Promise<void>;
@@ -68,6 +71,7 @@ export function useChat(): {
           } else if (e.type === "done") {
             assistant.status = undefined;
             if (e.message) assistant.id = e.message.id;
+            opts?.onTurnDone?.();
           }
         },
         { signal: controller.signal },
