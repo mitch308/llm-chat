@@ -1,16 +1,12 @@
 import type Database from "better-sqlite3";
-import { z } from "zod";
-import type { LLMClient, ModelMsg, ToolCall } from "../chat/llm";
+import { z, type ZodType } from "zod";
+import type { LLMClient, ModelMsg, ToolCall, ToolDef } from "../chat/llm";
 import { createMessagesService } from "../messages/messages.service";
 import { buildContext } from "../chat/context";
 import { createSpecSplitter } from "../chat/streamSplitter";
 import { createOpsService } from "../ops/ops.service";
-import { attachQuipInBackground, runBillAction, storeResult, type OpAction } from "../ops/ops.executor";
-import { billStats, listBills } from "../bills/bills.service";
-import { TOOL_DEFS } from "./tools";
-import { createNewsService, type NewsSearchResult, type SearchNewsQuery } from "../news/news.service";
-import { buildSourceFetchers } from "../news/fetchers";
-import type { SourceId } from "../news/sources";
+import { ASM } from "../features";
+import type { OpHandler, ToolEntry } from "@llm-chat/features/server";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -81,72 +77,89 @@ function collapseRepeatedRounds(
   return parts.filter((p) => !dropped.has(p.round)).map((p) => p.delta).join("");
 }
 
-/** 工具入参 schema（zod）：失败回喂错误让模型重试。 */
+/** 内核 op 工具定义（propose_op/execute_op）：ops 是核心设施，工具本身内置 agent，
+ *  但 kind 清单与 payload 校验/执行体均来自注册表（ASM.ops，feature 贡献）。
+ *  def 自原 server/src/agent/tools.ts TOOL_DEFS 逐字迁移，kind enum 改按注册表派生。 */
+const OP_TOOL_DEFS: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "propose_op",
+      description:
+        "创建写操作提议（不直接写库）。返回 op_id 用于生成确认卡片。同一时刻只有一个待确认提议，新的会取代旧的",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: [...ASM.ops.keys()] },
+          payload: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["expense", "income"] },
+              amount_yuan: { type: "number", description: "金额（元），必须为正数" },
+              item: { type: "string", description: "事项，如 午饭/打车/羽绒服" },
+              category: { type: "string", description: "叶子类目名，如 三餐/打车/衣服" },
+              date: { type: "string", description: "YYYY-MM-DD" },
+              note: { type: "string" },
+              id: { type: "number", description: "bill_update/bill_delete 时目标账单 id" },
+            },
+            required: ["amount_yuan", "item", "category", "date"],
+          },
+        },
+        required: ["kind", "payload"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "execute_op",
+      description:
+        "执行待确认提议。仅当用户对眼前的确认卡片明确文字确认（如「确认/对/保存吧」）时才可调用",
+      parameters: {
+        type: "object",
+        properties: {
+          op_id: { type: "string" },
+        },
+        required: ["op_id"],
+      },
+    },
+  },
+];
+
+/** 工具入参 schema（zod）：内核 op 工具用内置 schema，feature 工具查注册表。
+ *  propose_op 只校验信封（kind 为自由字符串，注册表 ASM.ops 为权威）；
+ *  kind/payload 按 OpHandler（argPayload）在 executeToolInner 的入参校验段
+ *  （retries 清零之前）校验，与信封失败共用同一重试升级。 */
 const argSchemas = {
-  query_bills: z
-    .object({
-      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      category: z.string().optional(),
-      type: z.enum(["expense", "income"]).optional(),
-      q: z.string().optional(),
-      limit: z.number().int().min(1).max(50).optional(),
-    })
-    .strict(),
-  bills_stats: z
-    .object({
-      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      type: z.enum(["expense", "income"]).optional(),
-      group_by: z.enum(["category", "date"]),
-      level: z.enum(["parent", "leaf"]).optional(),
-    })
-    .strict(),
   propose_op: z
     .object({
-      kind: z.enum(["bill_create", "bill_update", "bill_delete"]),
-      payload: z
-        .object({
-          type: z.enum(["expense", "income"]).optional(),
-          amount_yuan: z.number().positive(),
-          item: z.string().min(1),
-          category: z.string().min(1),
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          note: z.string().optional(),
-          id: z.number().int().optional(),
-        })
-        .passthrough(),
+      kind: z.string().min(1),
+      payload: z.object({}).passthrough(),
     })
     .strict(),
   execute_op: z.object({ op_id: z.string().min(1) }).strict(),
-  search_news: z
-    .object({
-      keywords: z.array(z.string()).optional(),
-      mode: z.enum(["keyword", "hot"]).optional(),
-      source: z.string().optional(),
-      from: z.string().optional(),
-      to: z.string().optional(),
-      limit: z.number().optional(),
-    })
-    .strict(),
 } as const;
+
+/** 工具入参 schema 查询：内核 op 工具用内置 schema，feature 工具查注册表。 */
+function schemaFor(name: string, tools: Map<string, ToolEntry>): ZodType | undefined {
+  if (name === "propose_op" || name === "execute_op") return argSchemas[name];
+  return tools.get(name)?.schema;
+}
 
 /** AGENT 循环：上下文 → 流式输出 → 工具执行回喂 → 落库。 */
 export async function* runAgent(opts: {
   db: Database.Database;
   llm: LLMClient;
   content: string;
-  /** 可注入的新闻检索（测试用）；默认按需抓取的真实服务。 */
-  newsSearch?: (q: SearchNewsQuery) => Promise<NewsSearchResult>;
+  /** 工具注册表（feature 贡献，测试可克隆后覆盖个别条目）；默认 ASM.tools。 */
+  tools?: Map<string, ToolEntry>;
   /** 取消探测（如客户端断开）：返回 true 即停止生成，已产出内容照常落库 */
   isCancelled?: () => boolean;
 }): AsyncIterable<AgentEvent> {
   const { db, llm, content } = opts;
+  const tools = opts.tools ?? ASM.tools;
   const messages = createMessagesService(db);
   const ops = createOpsService(db);
-  const newsSearch =
-    opts.newsSearch ??
-    createNewsService({ db, llm, fetchers: buildSourceFetchers() }).searchNews;
 
   // 回合级自动取消：启动时已存在的 pending 提议，若本轮既未确认（尝试过但失败不算）
   // 也未被新建提议取代 → 用户已转向其他任务，回合结束自动取消（卡片经对账信号翻转）
@@ -199,7 +212,7 @@ export async function* runAgent(opts: {
     } catch {
       return JSON.stringify({ ok: false, error: "入参不是合法 JSON" });
     }
-    const schema = argSchemas[call.name as keyof typeof argSchemas];
+    const schema = schemaFor(call.name, tools);
     if (schema) {
       const parsed = schema.safeParse(args);
       if (!parsed.success) {
@@ -215,35 +228,44 @@ export async function* runAgent(opts: {
       }
       args = parsed.data;
     }
+
+    // propose_op：kind（注册表键）与 payload（OpHandler.argPayload）校验。
+    // 必须放在下方 retries.delete 之前——信封通过即清零会让计数永远停在 1，
+    // fatal 升级不可达、模型复读非法入参直到 MAX_ROUNDS（回归修复）。
+    let opHandler: OpHandler | undefined;
+    if (call.name === "propose_op") {
+      const p = args as unknown as { kind: string; payload: Record<string, unknown> };
+      opHandler = ASM.ops.get(p.kind);
+      if (!opHandler) {
+        const used = (retries.get(call.name) ?? 0) + 1;
+        retries.set(call.name, used);
+        if (used > MAX_TOOL_RETRIES) {
+          return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
+        }
+        return JSON.stringify({ ok: false, error: `未知提议类型: ${p.kind}` });
+      }
+      const parsedPayload = opHandler.argPayload.safeParse(p.payload);
+      if (!parsedPayload.success) {
+        const used = (retries.get(call.name) ?? 0) + 1;
+        retries.set(call.name, used);
+        if (used > MAX_TOOL_RETRIES) {
+          return JSON.stringify({ ok: false, error: "入参多次不合法，放弃该工具", fatal: true });
+        }
+        return JSON.stringify({
+          ok: false,
+          error: `入参不合法: ${parsedPayload.error.issues.map((i) => i.message).join("; ")}`,
+        });
+      }
+      args = { kind: p.kind, payload: parsedPayload.data };
+    }
     retries.delete(call.name);
 
     const a = args as Record<string, unknown>;
     switch (call.name) {
-      case "query_bills": {
-        const q = a as unknown as z.infer<typeof argSchemas.query_bills>;
-        const items = listBills(db, {
-          from: q.from,
-          to: q.to,
-          category: q.category,
-          type: q.type,
-          kw: q.q,
-          limit: q.limit ?? 20,
-        });
-        return JSON.stringify({ ok: true, items });
-      }
-      case "bills_stats": {
-        const s = a as unknown as z.infer<typeof argSchemas.bills_stats>;
-        const items = billStats(db, {
-          from: s.from,
-          to: s.to,
-          type: s.type,
-          groupBy: s.group_by,
-          level: s.level,
-        });
-        return JSON.stringify({ ok: true, items });
-      }
       case "propose_op": {
-        const p = a as unknown as { kind: OpAction; payload: Record<string, unknown> };
+        const p = a as unknown as { kind: string; payload: Record<string, unknown> };
+        const handler = opHandler!; // kind 与 payload 已在入参校验段通过（含重试升级）
+        const payload = p.payload;
         // 工具循环防护：模型不稳定时会反复 propose 相同内容（每轮开场白被跨轮累积成复读文本，
         // 且旧提议被 supersede 成 expired 垃圾）。同 kind+payload 的 pending 已存在时复用之，
         // 并用强指令把模型拉回「输出 spec 卡片」这一步。
@@ -251,7 +273,7 @@ export async function* runAgent(opts: {
           .getRecentOpsSummary(10)
           .find(
             (o) =>
-              o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(p.payload),
+              o.status === "pending" && o.kind === p.kind && stableJson(o.payload) === stableJson(payload),
           );
         if (existing) {
           createdOpIds.add(existing.op_id);
@@ -260,18 +282,18 @@ export async function* runAgent(opts: {
             duplicate: true,
             op_id: existing.op_id,
             kind: p.kind,
-            payload: p.payload,
-            hint: "该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status=\"pending\"，然后正常结束。",
+            payload,
+            hint: handler.cardHint?.duplicate,
           });
         }
-        const proposal = ops.proposeOp(p.kind, p.payload);
+        const proposal = ops.proposeOp(p.kind, payload);
         createdOpIds.add(proposal.op_id);
         return JSON.stringify({
           ok: true,
           op_id: proposal.op_id,
           kind: proposal.kind,
-          payload: p.payload,
-          hint: "提议已创建。立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素（props 含上述 op_id 与 status=\"pending\"），不要再调用任何工具。",
+          payload,
+          hint: handler.cardHint?.created,
         });
       }
       case "execute_op": {
@@ -279,18 +301,21 @@ export async function* runAgent(opts: {
         const p = a as unknown as { op_id: string };
         const proposal = ops.getOps([p.op_id])[0];
         if (!proposal) return JSON.stringify({ ok: false, error: "提议不存在" });
+        const handler = ASM.ops.get(proposal.kind);
+        if (!handler) {
+          return JSON.stringify({ ok: false, error: `未知提议类型: ${proposal.kind}` });
+        }
         try {
           const outcome = await ops.executeOp(p.op_id, async (payload) =>
-            runBillAction(db, proposal.kind, payload as Record<string, unknown>),
+            handler.execute(payload as Record<string, unknown>, { db, llm }),
           );
           if (outcome.status === "invalid") {
             return JSON.stringify({ ok: false, error: outcome.message });
           }
-          const data = outcome.data as { bill: import("../bills/bills.service").Bill; deleted?: boolean };
-          // quip 转后台生成补写，工具立即返回（不拖慢回合与卡片对账信号）
-          storeResult(db, p.op_id, { bill: data.bill, deleted: data.deleted }, null);
-          attachQuipInBackground(db, llm, p.op_id, data.bill);
-          return JSON.stringify({ ok: true, status: outcome.status, bill: data.bill });
+          const data = outcome.data as Record<string, unknown>;
+          // handler 后置（写结果 + quip 转后台生成补写），工具立即返回（不拖慢回合与卡片对账信号）
+          handler.afterExecute?.({ db, llm, opId: p.op_id }, data);
+          return JSON.stringify({ ok: true, status: outcome.status, ...data });
         } catch (err) {
           return JSON.stringify({
             ok: false,
@@ -298,41 +323,31 @@ export async function* runAgent(opts: {
           });
         }
       }
-      case "search_news": {
-        const n = a as unknown as z.infer<typeof argSchemas.search_news>;
-        const keywords = n.keywords ?? [];
-        const mode = n.mode === "hot" ? "hot" : keywords.length > 0 ? "keyword" : "hot";
-        try {
-          const result = await newsSearch({
-            keywords,
-            mode,
-            source: n.source as SourceId | undefined,
-            from: n.from,
-            to: n.to,
-            limit: n.limit,
-          });
-          return JSON.stringify({ ok: true, ...result });
-        } catch (err) {
-          return JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : "新闻查询失败",
-          });
+      default: {
+        // feature 工具：注册表动态分发，执行体由各 feature 贡献（入参已在上方按其 schema 校验）
+        const entry = tools.get(call.name);
+        if (!entry) {
+          return JSON.stringify({ ok: false, error: `未知工具: ${call.name}` });
         }
+        const result = await entry.execute(args, { db, llm });
+        // 执行体约定返回 JSON 字符串（与原内置 case 一致）；兜底对象也直接序列化
+        return typeof result === "string" ? result : JSON.stringify(result);
       }
-      default:
-        return JSON.stringify({ ok: false, error: `未知工具: ${call.name}` });
     }
   }
 
   let finalMessage: { id: number } | undefined;
   let cancelled = false;
 
+  // 模型侧工具清单 = 内核 op 工具 + 注册表（feature 贡献）工具
+  const toolDefs: ToolDef[] = [...OP_TOOL_DEFS, ...[...tools.values()].map((t) => t.def)];
+
   for (let round = 0; round < MAX_ROUNDS && !cancelled; round++) {
     currentRound = round;
     let calls: ToolCall[] = [];
     let roundText = "";
 
-    for await (const delta of llm.stream({ system, messages: convo, tools: TOOL_DEFS })) {
+    for await (const delta of llm.stream({ system, messages: convo, tools: toolDefs })) {
       if (opts.isCancelled?.()) {
         cancelled = true;
         break;

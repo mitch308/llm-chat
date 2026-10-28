@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ASM } from "../features";
 import { getDb, getFts5Enabled, closeAllForTests, closeDb } from "./connection";
 
 let dirs: string[] = [];
@@ -90,6 +91,20 @@ describe("db layer", () => {
       "打车",
       "火车机票",
     ]);
+  });
+
+  it("ASM 装配注入 bills DDL 且核心表照常创建", () => {
+    // bills feature 迁入后 categories/bills DDL 经 ASM.ddl 注入；核心 DDL 原样执行
+    const ddlText = ASM.ddl.join(";\n");
+    expect(ddlText).toContain("CREATE TABLE IF NOT EXISTS categories");
+    expect(ddlText).toContain("CREATE TABLE IF NOT EXISTS bills");
+    const db = getDb(tempDbPath());
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all() as { name: string }[];
+    const names = rows.map((r) => r.name);
+    expect(names).toContain("messages");
+    expect(names).toContain("op_proposals");
   });
 
   it("reports fts5 availability and creates news_fts when enabled", () => {

@@ -1,14 +1,15 @@
 import type Database from "better-sqlite3";
+import { z } from "zod";
+import { writeOpResult, type LLMClient, type OpHandler } from "@llm-chat/features/server";
+import { OpRunError, type RunResult } from "../../../server/src/ops/ops.service";
 import {
   createBill,
   deleteBill,
   getBill,
   updateBill,
   type Bill,
-} from "../bills/bills.service";
-import { OpRunError, type RunResult } from "./ops.service";
-import { generateQuip } from "./quip";
-import type { LLMClient } from "../chat/llm";
+} from "./bills.service";
+import { attachQuipInBackground } from "./quip";
 
 export type OpAction = "bill_create" | "bill_update" | "bill_delete";
 
@@ -98,88 +99,35 @@ export function runBillAction(
   return { ok: true, data: { bill: existing, deleted: true } };
 }
 
-/** 生成俏皮话（真实统计输入；任何失败返回 null）。 */
-export async function attachQuip(
-  db: Database.Database,
-  llm: LLMClient | undefined,
-  bill: Bill,
-): Promise<string | null> {
-  try {
-    if (!llm) return null;
-    const { from, to } = monthRange(bill.date);
-    const monthCat = db
-      .prepare(
-        `SELECT COALESCE(SUM(amount_cents), 0) AS total, COUNT(*) AS n
-         FROM bills WHERE category_id = ? AND date BETWEEN ? AND ?`,
-      )
-      .get(bill.category_id, from, to) as { total: number; n: number };
-    const monthTotal = (
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM bills
-           WHERE type = 'expense' AND date BETWEEN ? AND ?`,
-        )
-        .get(from, to) as { total: number }
-    ).total;
-    return await generateQuip(
-      {
-        bill,
-        monthCategoryTotalCents: monthCat.total,
-        monthCategoryCount: monthCat.n,
-        monthTotalCents: monthTotal,
-      },
-      llm,
-    );
-  } catch {
-    return null;
-  }
-}
+/** propose_op 的 payload 校验（原 agent.ts argSchemas.propose_op.payload 逐字迁移）。 */
+const billOpPayload = z
+  .object({
+    type: z.enum(["expense", "income"]).optional(),
+    amount_yuan: z.number().positive(),
+    item: z.string().min(1),
+    category: z.string().min(1),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().optional(),
+    id: z.number().int().optional(),
+  })
+  .passthrough();
 
-/** 把执行结果（含 quip）写回提议。 */
-export function storeResult(
-  db: Database.Database,
-  opId: string,
-  data: object,
-  quip: string | null,
-): void {
-  db.prepare(`UPDATE op_proposals SET result_json = ? WHERE op_id = ?`).run(
-    JSON.stringify({ data, quip }),
-    opId,
-  );
-}
-
-/** quip 后台生成完成后补写进已存的 result_json（不动 data 载荷）。 */
-function mergeQuipIntoResult(db: Database.Database, opId: string, quip: string): void {
-  const row = db
-    .prepare(`SELECT result_json FROM op_proposals WHERE op_id = ?`)
-    .get(opId) as { result_json: string | null } | undefined;
-  if (!row) return;
-  let parsed: { data?: unknown; quip?: string | null };
-  try {
-    parsed = JSON.parse(row.result_json ?? "{}") as { data?: unknown; quip?: string | null };
-  } catch {
-    return; // 存量结果不可解析：宁缺 quip 也不覆盖
-  }
-  parsed.quip = quip;
-  db.prepare(`UPDATE op_proposals SET result_json = ? WHERE op_id = ?`).run(
-    JSON.stringify(parsed),
-    opId,
-  );
-}
-
-/** fire-and-forget：确认立即返回，quip 生成后补写（glm 实测首 token ~13s，不能同步等）。 */
-export function attachQuipInBackground(
-  db: Database.Database,
-  llm: LLMClient | undefined,
-  opId: string,
-  bill: Bill,
-): void {
-  void (async () => {
-    try {
-      const quip = await attachQuip(db, llm, bill);
-      if (quip) mergeQuipIntoResult(db, opId, quip);
-    } catch {
-      // 后台失败静默：quip 是锦上添花
-    }
-  })();
+/** 按 kind 闭包分发：三种账单动作共用一套 payload 校验与后置流程，
+ *  仅 execute 落到不同的 runBillAction 分支。 */
+export function billOpHandler(kind: OpAction): OpHandler {
+  return {
+    argPayload: billOpPayload,
+    execute: (payload, env) => runBillAction(env.db, kind, payload),
+    afterExecute: ({ db, llm, opId }, data) => {
+      // 结果先落 {data, quip:null}，quip 后台生成后补写（不阻塞确认响应）
+      writeOpResult(db, opId, data, null);
+      attachQuipInBackground(db, llm, opId, (data as { bill: Bill }).bill);
+    },
+    cardHint: {
+      created:
+        '提议已创建。立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素（props 含上述 op_id 与 status="pending"），不要再调用任何工具。',
+      duplicate:
+        '该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status="pending"，然后正常结束。',
+    },
+  };
 }

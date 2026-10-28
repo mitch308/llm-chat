@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useChat } from "./useChat";
-import { provideOpsSync } from "../actions/opsSync";
+import { provideOpsSync } from "@llm-chat/features/web";
 import MessageList from "./MessageList.vue";
 import ChatInput from "./ChatInput.vue";
 

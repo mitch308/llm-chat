@@ -2,20 +2,18 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ref } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 
-vi.mock("../../api/client", () => ({
-  getOps: vi.fn().mockResolvedValue({ items: [] }),
-  postAction: vi.fn(),
-  streamChat: vi.fn(),
-  getMessages: vi.fn(),
-}));
+// 网络函数走 mock；OpsSync 的 provide/inject 用真实现（kernel/web.ts 原样导出）
+vi.mock("@llm-chat/features/web", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@llm-chat/features/web")>();
+  return {
+    ...actual,
+    getOps: vi.fn().mockResolvedValue({ items: [] }),
+    postAction: vi.fn(),
+    handleAction: vi.fn(),
+  };
+});
 
-vi.mock("../../actions/handleAction", () => ({
-  handleAction: vi.fn(),
-}));
-
-import { getOps } from "../../api/client";
-import { handleAction } from "../../actions/handleAction";
-import { OpsSyncKey } from "../../actions/opsSync";
+import { getOps, handleAction, OpsSyncKey } from "@llm-chat/features/web";
 import BillConfirmCard from "./BillConfirmCard.vue";
 
 const baseProps = {
@@ -68,7 +66,7 @@ describe("BillConfirmCard", () => {
   });
 
   it("restores saved state and quip from GET /ops on mount (I6)", async () => {
-    const { getOps } = await import("../../api/client");
+    const { getOps } = await import("@llm-chat/features/web");
     vi.mocked(getOps).mockResolvedValue({
       items: [
         {

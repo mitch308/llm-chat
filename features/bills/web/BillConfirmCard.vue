@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import { getOps } from "../../api/client";
-import { handleAction } from "../../actions/handleAction";
-import { useOpsSync } from "../../actions/opsSync";
+import { getOps, handleAction, useOpsSync } from "@llm-chat/features/web";
 
 type CardStatus = "pending" | "saved" | "executed" | "cancelled" | "expired" | "error";
 

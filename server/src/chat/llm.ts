@@ -1,41 +1,15 @@
 import OpenAI from "openai";
+import type {
+  Delta,
+  LLMClient,
+  ModelMsg,
+  ToolCall,
+  ToolDef,
+} from "@llm-chat/features/server";
 
-/** 模型侧工具调用（arguments 为 JSON 字符串）。 */
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-}
-
-/** 与 OpenAI 兼容格式的工具定义。 */
-export interface ToolDef {
-  type: "function";
-  function: {
-    name: string;
-    description?: string;
-    parameters: Record<string, unknown>;
-  };
-}
-
-/** 多轮对话消息（agent 循环回喂用）。 */
-export interface ModelMsg {
-  role: "user" | "assistant" | "tool";
-  content: string;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-}
-
-export type Delta =
-  | { type: "text"; delta: string }
-  | { type: "tool_calls"; calls: ToolCall[] };
-
-export interface LLMClient {
-  stream(input: {
-    system: string;
-    messages: ModelMsg[];
-    tools: ToolDef[];
-  }): AsyncIterable<Delta>;
-}
+// wire 类型唯一定义在 features/kernel/server.ts（kernel 为唯一权威），
+// 此处 re-export 维持既有导入路径（server 内部与 features 侧）不变。
+export type { Delta, LLMClient, ModelMsg, ToolCall, ToolDef };
 
 export const ZHIPU_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 export const ZHIPU_MODEL = "glm-5.3-flash";

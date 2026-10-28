@@ -3,12 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeAllForTests, getDb } from "../db/connection";
-import { createBill } from "../bills/bills.service";
-import { createFakeLLM, type LLMClient } from "../chat/llm";
-import { generateQuip, QUIP_TIMEOUT_MS } from "./quip";
-import { createOpsService } from "./ops.service";
-import { attachQuipInBackground } from "./ops.executor";
+import { closeAllForTests, getDb } from "../../../server/src/db/connection";
+import { createBill } from "./bills.service";
+import { createFakeLLM, type LLMClient } from "../../../server/src/chat/llm";
+import { attachQuipInBackground, generateQuip, QUIP_TIMEOUT_MS } from "./quip";
+import { createOpsService } from "../../../server/src/ops/ops.service";
 
 let dirs: string[] = [];
 let db: Database.Database;

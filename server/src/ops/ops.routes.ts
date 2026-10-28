@@ -1,12 +1,16 @@
 import type Database from "better-sqlite3";
 import { Router } from "express";
-import type { Bill } from "../bills/bills.service";
+import { readOpResult, type OpHandler } from "@llm-chat/features/server";
 import { createOpsService, OpRunError } from "./ops.service";
-import { attachQuip, attachQuipInBackground, runBillAction, storeResult, type OpAction } from "./ops.executor";
 import { getDefaultLLMClient, type LLMClient } from "../chat/llm";
 
-/** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。 */
-export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
+/** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。
+ *  动作按 handlers（ASM.ops，feature 贡献）分发；cancel_op 为核心内置动作。 */
+export function opsRoutes(
+  db: Database.Database,
+  llm?: LLMClient,
+  handlers: ReadonlyMap<string, OpHandler> = new Map(),
+): Router {
   const ops = createOpsService(db);
   const router = Router();
 
@@ -29,7 +33,8 @@ export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
       return;
     }
 
-    if (name !== "bill_create" && name !== "bill_update" && name !== "bill_delete") {
+    const handler = handlers.get(name);
+    if (!handler) {
       res.status(404).json({ code: "NOT_FOUND", message: `未知动作: ${name}` });
       return;
     }
@@ -50,7 +55,7 @@ export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
 
     try {
       const outcome = await ops.executeOp(opId, async (payload) =>
-        runBillAction(db, name as OpAction, payload as Record<string, unknown>),
+        handler.execute(payload, { db, llm }),
       );
 
       if (outcome.status === "invalid") {
@@ -64,27 +69,23 @@ export function opsRoutes(db: Database.Database, llm?: LLMClient): Router {
       }
 
       if (outcome.status === "already") {
-        const stored = JSON.parse(ops.getOps([opId])[0]?.result_json ?? "{}") as {
-          data?: { bill: Bill; deleted?: boolean };
-          quip?: string | null;
-        };
+        const stored = readOpResult(db, opId);
+        const data = (stored.data ?? {}) as Record<string, unknown>;
         res.json({
+          ...data,
           status: "already",
-          bill: stored.data?.bill ?? null,
-          deleted: stored.data?.deleted ?? false,
+          deleted: data.deleted ?? false,
           quip: stored.quip ?? null,
         });
         return;
       }
 
-      // executed：quip 转后台生成（实测首 token ~13s，不能阻塞确认响应），完成后补写 result_json
-      const data = outcome.data as { bill: Bill; deleted?: boolean };
-      const client = llm ?? getDefaultLLMClient();
-      storeResult(db, opId, { bill: data.bill, deleted: data.deleted }, null);
-      attachQuipInBackground(db, client, opId, data.bill);
+      // executed：handler 后置（写结果 + quip 转后台生成，实测首 token ~13s，不能阻塞确认响应）
+      const data = outcome.data as Record<string, unknown>;
+      handler.afterExecute?.({ db, llm: llm ?? getDefaultLLMClient(), opId }, data);
       res.json({
+        ...data,
         status: "executed",
-        bill: data.bill,
         deleted: data.deleted ?? false,
         quip: null,
       });
