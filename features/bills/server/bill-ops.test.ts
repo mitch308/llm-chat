@@ -159,7 +159,7 @@ describe("billOpHandler（OpHandler 装配）", () => {
     expect(handler.cardHint?.duplicate).toContain("BillConfirmCard");
   });
 
-  it("afterExecute：writeOpResult 落 result_json + quip 后台补写（回归：5s 超时掐死生成）", async () => {
+  it("afterExecute：写 result_json + 返回 quip 作为确认后附言（文本确认通道出文本用）", async () => {
     const handler: OpHandler = billOpHandler("bill_create");
     const ops = createOpsService(db);
     const p = ops.proposeOp("bill_create", createPayload);
@@ -171,14 +171,16 @@ describe("billOpHandler（OpHandler 装配）", () => {
       date: "2026-10-27",
     });
 
-    handler.afterExecute?.({ db, llm: createFakeLLM([[{ type: "text", delta: "吃的比穿的多🍜" }]]), opId: p.op_id }, { bill });
+    const postscript = await handler.afterExecute?.(
+      { db, llm: createFakeLLM([[{ type: "text", delta: "吃的比穿的多🍜" }]]), opId: p.op_id },
+      { bill },
+    );
 
-    // 立即落 {data, quip:null}，不阻塞
-    await vi.waitFor(() => {
-      const row = ops.getOps([p.op_id])[0];
-      expect(JSON.parse(row.result_json!).data.bill.item).toBe("衣服");
-      expect(JSON.parse(row.result_json!).quip).toBe("吃的比穿的多🍜");
-    });
+    // 附言即 quip（失败为 undefined）；结果已落库，quip 后写进 result_json
+    expect(postscript).toBe("吃的比穿的多🍜");
+    const row = ops.getOps([p.op_id])[0];
+    expect(JSON.parse(row.result_json!).data.bill.item).toBe("衣服");
+    expect(JSON.parse(row.result_json!).quip).toBe("吃的比穿的多🍜");
   });
 });
 
@@ -206,7 +208,6 @@ describe("cardSpec：服务端直出确认卡片（agent 循环消费）", () =>
         status: "pending",
         data: { type: "expense", amount_yuan: 200, item: "衣服", category: "衣服", date: "2026-10-27", note: null },
         diff: null,
-        quip: null,
         warning: null,
       },
     });
@@ -242,24 +243,5 @@ describe("cardSpec：服务端直出确认卡片（agent 循环消费）", () =>
       before: { type: "expense", amount_yuan: 68, item: "寿司", category: "三餐", date: "2026-10-27", note: null },
       after: null,
     });
-  });
-
-  it("executed：从落库 bill 还原 saved 卡片；quip 留空，由卡片对账补齐", () => {
-    const handler = billOpHandler("bill_create");
-    const bill = createBill(db, {
-      type: "expense",
-      amountCents: 20000,
-      item: "衣服",
-      categoryId: (db.prepare("SELECT id FROM categories WHERE name='衣服'").get() as { id: number }).id,
-      date: "2026-10-27",
-    });
-    const card = handler.cardSpec!(
-      cardInput("bill_create", {}, { status: "executed", data: { bill } }),
-      { db },
-    );
-    expect(card!.props.status).toBe("saved");
-    expect(card!.props.data).toMatchObject({ amount_yuan: 200, item: "衣服", category: "衣服" });
-    expect(card!.props.quip).toBeNull();
-    expect(card!.props.diff).toBeNull();
   });
 });

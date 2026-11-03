@@ -42,6 +42,8 @@ describe("SKILLS_PROMPT", () => {
     expect(SKILLS_PROMPT).toContain("需要写库的操作一律先生成确认卡片，禁止直接写库");
     expect(SKILLS_PROMPT).not.toContain("这笔花了多少钱");
     expect(SKILLS_PROMPT).not.toContain("（记/改/删）");
+    // 新记账措辞守卫：上下文有相似旧账也不得说"改成"（回归：新记被叙述成修改）
+    expect(SKILLS_PROMPT).toContain('禁止说"改成/修改"');
   });
 });
 

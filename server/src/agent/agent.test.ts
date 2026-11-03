@@ -137,7 +137,6 @@ describe("runAgent", () => {
       status: "pending",
       data: { type: "expense", amount_yuan: 200, item: "衣服", category: "衣服", date: "2026-10-27", note: null },
       diff: null,
-      quip: null,
       warning: null,
     });
     expect(events[events.length - 1].type).toBe("done");
@@ -376,23 +375,28 @@ describe("runAgent", () => {
     expect(status.status).toBe("executed");
   });
 
-  it("execute_op 成功 → 服务端直出 saved 卡片，模型不花额外轮（1 次 LLM 调用）", async () => {
+  it("execute_op 成功 → 不再出卡片，quip 作为确认后附言文本（1 次 agent 调用）", async () => {
     const seed = createOpsService(db).proposeOp("bill_create", {
       amount_yuan: 400,
       item: "停车费",
       category: "停车",
       date: "2026-10-27",
     });
-    // 只计 agent 回合：quip 后台生成走 tools:[] 的独立调用，不算回合
+    // 只计 agent 回合：quip 生成走 tools:[] 的独立调用，不算回合
     let agentRounds = 0;
     const llm: LLMClient = {
       async *stream(input) {
-        if (input.tools.length === 0) return; // 后台 quip：空流即可
+        if (input.tools.length === 0) {
+          yield { type: "text", delta: "4块钱的早饭，本月省钱冠军预定！🔍" };
+          return;
+        }
         agentRounds += 1;
         if (agentRounds > 1) throw new Error(`unexpected agent round ${agentRounds}`);
         yield {
           type: "tool_calls",
-          calls: [{ id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: seed.op_id }) }],
+          calls: [
+            { id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: seed.op_id }) },
+          ],
         };
       },
     };
@@ -400,19 +404,18 @@ describe("runAgent", () => {
     const events = await collect(llm);
 
     expect(agentRounds).toBe(1);
-    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
-    expect(specs).toHaveLength(2);
-    const element = JSON.parse(specs[1].line) as {
-      value: { type: string; props: Record<string, unknown> };
-    };
-    expect(element.value.type).toBe("BillConfirmCard");
-    expect(element.value.props).toMatchObject({
-      op_id: seed.op_id,
-      kind: "bill_create",
-      status: "saved",
-      data: { type: "expense", amount_yuan: 400, item: "停车费", category: "停车", date: "2026-10-27", note: null },
-      quip: null, // quip 后台生成，卡片自轮询补齐
-    });
+    // 不再直出 saved 卡片：旧消息的 pending 卡片经 GET /ops 对账翻转
+    expect(events.some((e) => e.type === "spec")).toBe(false);
+    const texts = events.filter((e) => e.type === "text") as { delta: string }[];
+    expect(texts.map((t) => t.delta).join("")).toContain("省钱冠军");
+    const svc = createMessagesService(db);
+    const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
+    expect(assistant.content_text).toContain("省钱冠军");
+    expect(assistant.spec_json).toBeNull();
+    const status = db
+      .prepare("SELECT status FROM op_proposals WHERE op_id = ?")
+      .get(seed.op_id) as { status: string };
+    expect(status.status).toBe("executed");
   });
 
   it("execute_op 失败（提议不存在）→ 不直出卡片，模型解释轮保留", async () => {

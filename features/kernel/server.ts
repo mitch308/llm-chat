@@ -83,7 +83,9 @@ export interface OpHandler {
     payload: Record<string, unknown>,
     env: ToolEnv,
   ): Promise<RunResult> | RunResult;
-  afterExecute?(env: ToolEnv & { opId: string }, data: object): void; // 写结果 + quip 等后置
+  afterExecute?(env: ToolEnv & { opId: string }, data: object): string | Promise<string> | void;
+  // 返回值 = 确认后附言（如 quip）：agent 文本确认通道作为文本补进回合消息并收尾；
+  // 按钮通道由动作路由后台落一条 assistant 文本消息（响应不等待，前端确认后轮询拾取）
   cardHint?: { created: string; duplicate: string }; // 回退用：无 cardSpec 时 propose_op 两条回喂的 spec 卡片指令
   /** 服务端直出确认卡片：propose_op/execute_op 成功后由 agent 循环直接产出 spec 并收尾回合，
    *  不再消耗模型轮次（LLM 调用准则：服务端已确定的内容不消耗模型轮次）。

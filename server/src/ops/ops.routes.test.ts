@@ -4,11 +4,12 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { OpHandler } from "@llm-chat/features/server";
 import { closeAllForTests, getDb } from "../db/connection";
 import { createFakeLLM } from "../chat/llm";
+import { createMessagesService } from "../messages/messages.service";
 import { createOpsService } from "./ops.service";
 import { opsRoutes } from "./ops.routes";
 
@@ -28,12 +29,13 @@ function stubHandlers(): ReadonlyMap<string, OpHandler> {
       executeCalls += 1;
       return { ok: true, data };
     },
-    afterExecute: (env, data) => {
-      // 模拟真实 handler：写 result_json（quip 由后台补写，此处直接占位）
+    afterExecute: async (env, data) => {
+      // 模拟真实 handler：写 result_json 并返回确认后附言（quip）
       db.prepare(`UPDATE op_proposals SET result_json = ? WHERE op_id = ?`).run(
         JSON.stringify({ data, quip: null }),
         env.opId,
       );
+      return "stub 附言";
     },
   });
   return new Map<string, OpHandler>([
@@ -83,6 +85,14 @@ describe("POST /api/actions/:name", () => {
     // afterExecute 已把结果写进 result_json
     const row = createOpsService(db).getOps([p.op_id])[0];
     expect(JSON.parse(row.result_json!)).toEqual({ data: { stub: "created" }, quip: null });
+
+    // 附言（quip）后台落一条 assistant 文本消息，响应本身不等它
+    await vi.waitFor(() => {
+      const msgs = createMessagesService(db).listMessages({ limit: 10 });
+      expect(msgs.filter((m) => m.role === "assistant").map((m) => m.content_text)).toEqual([
+        "stub 附言",
+      ]);
+    });
   });
 
   it("replaying the same op_id returns already with stored data and quip (readOpResult)", async () => {
@@ -106,6 +116,14 @@ describe("POST /api/actions/:name", () => {
     expect(second.body.stub).toBe("created");
     expect(second.body.quip).toBe("stub-quip");
     expect(executeCalls).toBe(1); // run 只执行一次（幂等重放）
+
+    // 幂等重放不重复落附言消息（首次确认已落过）
+    await vi.waitFor(() => {});
+    const assistantTexts = createMessagesService(db)
+      .listMessages({ limit: 10 })
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.content_text);
+    expect(assistantTexts).toEqual(["stub 附言"]);
   });
 
   it("expired proposal → 409 OP_EXPIRED and handler not called", async () => {

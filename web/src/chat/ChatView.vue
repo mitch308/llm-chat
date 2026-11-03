@@ -1,15 +1,21 @@
 <script setup lang="ts">
+import { watch } from "vue";
 import { useChat } from "./useChat";
-import { provideOpsSync } from "@llm-chat/features/web";
+import { provideMessageSync, provideOpsSync } from "@llm-chat/features/web";
 import MessageList from "./MessageList.vue";
 import ChatInput from "./ChatInput.vue";
 
 // 每轮对话结束自增：pending 卡片借此向服务端对账（文字"确认"路径无按钮点击）
 const opsSync = provideOpsSync();
-const { messages, streaming, send, stop, loadOlder, loadingOlder } = useChat({
+// 确认按钮成功后自增：服务端把附言（quip）后台落一条文本消息，触发短暂轮询拾取
+const messageSync = provideMessageSync();
+const { messages, streaming, send, stop, loadOlder, loadingOlder, pickupAfterAction } = useChat({
   onTurnDone: () => {
     opsSync.value += 1;
   },
+});
+watch(messageSync, () => {
+  pickupAfterAction();
 });
 </script>
 

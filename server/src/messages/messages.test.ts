@@ -35,6 +35,16 @@ describe("messages service", () => {
     expect(page.map((m) => m.content_text)).toEqual(["二", "一"]);
   });
 
+  it("afterId returns only newer messages（确认附言拾取用）", () => {
+    const svc = createMessagesService(freshDb());
+    for (const t of ["一", "二", "三", "四", "五"]) {
+      svc.appendMessage({ role: "user", contentText: t });
+    }
+    const second = svc.listMessages({ limit: 100 }).find((m) => m.content_text === "二")!;
+    const newer = svc.listMessages({ afterId: second.id, limit: 100 });
+    expect(newer.map((m) => m.content_text)).toEqual(["五", "四", "三"]);
+  });
+
   it("stores spec_json and returns it", () => {
     const svc = createMessagesService(freshDb());
     const saved = svc.appendMessage({
@@ -78,5 +88,29 @@ describe("GET /api/messages", () => {
       "1",
       "2",
     ]);
+  });
+
+  it("after_id returns newer messages ascending（附言拾取轮询用）", async () => {
+    const db = freshDb();
+    const svc = createMessagesService(db);
+    for (const t of ["1", "2", "3", "4", "5"]) {
+      svc.appendMessage({ role: "user", contentText: t });
+    }
+    const second = svc.listMessages({ limit: 10 }).find((m) => m.content_text === "2")!;
+
+    const res = await request(createApp({ db })).get(`/api/messages?after_id=${second.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((m: { content_text: string }) => m.content_text)).toEqual([
+      "3",
+      "4",
+      "5",
+    ]);
+  });
+
+  it("after_id 非正整数 → 400", async () => {
+    const db = freshDb();
+    const res = await request(createApp({ db })).get("/api/messages?after_id=x");
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("BAD_REQUEST");
   });
 });

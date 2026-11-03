@@ -100,8 +100,8 @@ export async function attachQuip(
   }
 }
 
-/** quip 后台生成完成后补写进已存的 result_json（不动 data 载荷）。 */
-function mergeQuipIntoResult(db: Database.Database, opId: string, quip: string): void {
+/** quip 后台生成完成后补写进已存的 result_json（不动 data 载荷）。bill-ops afterExecute 使用。 */
+export function mergeQuipIntoResult(db: Database.Database, opId: string, quip: string): void {
   const row = db
     .prepare(`SELECT result_json FROM op_proposals WHERE op_id = ?`)
     .get(opId) as { result_json: string | null } | undefined;
@@ -117,21 +117,4 @@ function mergeQuipIntoResult(db: Database.Database, opId: string, quip: string):
     JSON.stringify(parsed),
     opId,
   );
-}
-
-/** fire-and-forget：确认立即返回，quip 生成后补写（glm 实测首 token ~13s，不能同步等）。 */
-export function attachQuipInBackground(
-  db: Database.Database,
-  llm: LLMClient | undefined,
-  opId: string,
-  bill: Bill,
-): void {
-  void (async () => {
-    try {
-      const quip = await attachQuip(db, llm, bill);
-      if (quip) mergeQuipIntoResult(db, opId, quip);
-    } catch {
-      // 后台失败静默：quip 是锦上添花
-    }
-  })();
 }

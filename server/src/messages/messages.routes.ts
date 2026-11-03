@@ -9,15 +9,17 @@ export function messagesRoutes(db: Database.Database): Router {
 
   router.get("/messages", (req, res) => {
     const beforeId = req.query.before_id ? Number(req.query.before_id) : undefined;
+    const afterId = req.query.after_id ? Number(req.query.after_id) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
     if (
       (beforeId !== undefined && (!Number.isInteger(beforeId) || beforeId <= 0)) ||
+      (afterId !== undefined && (!Number.isInteger(afterId) || afterId <= 0)) ||
       (limit !== undefined && (!Number.isInteger(limit) || limit <= 0))
     ) {
-      res.status(400).json({ code: "BAD_REQUEST", message: "before_id 与 limit 须为正整数" });
+      res.status(400).json({ code: "BAD_REQUEST", message: "before_id/after_id 与 limit 须为正整数" });
       return;
     }
-    const items = svc.listMessages({ beforeId, limit }).reverse();
+    const items = svc.listMessages({ beforeId, afterId, limit }).reverse();
     res.json({ items });
   });
 

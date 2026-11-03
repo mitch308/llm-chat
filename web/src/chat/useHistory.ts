@@ -5,7 +5,8 @@ import type { ChatMsg, ServerMessage } from "./types";
 const WINDOW_CAP = 100;
 const PAGE_SIZE = 20;
 
-function fromServer(m: ServerMessage): ChatMsg {
+/** 存储消息 → 聊天消息（spec JSONL 反序列化）。 */
+export function fromServer(m: ServerMessage): ChatMsg {
   let specLines: string[] = [];
   if (m.spec_json) {
     try {

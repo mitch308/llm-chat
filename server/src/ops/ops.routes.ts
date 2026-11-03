@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { Router } from "express";
 import { readOpResult, type OpHandler } from "@llm-chat/features/server";
 import { createOpsService, OpRunError } from "./ops.service";
+import { createMessagesService } from "../messages/messages.service";
 import { getDefaultLLMClient, type LLMClient } from "../chat/llm";
 
 /** POST /api/actions/:name（确认按钮）+ GET /api/ops?op_ids=。
@@ -80,9 +81,26 @@ export function opsRoutes(
         return;
       }
 
-      // executed：handler 后置（写结果 + quip 转后台生成，实测首 token ~13s，不能阻塞确认响应）
+      // executed：handler 后置（写结果 + quip 生成，内含 15s 超时兜底）。响应立即返回，
+      // 卡片经前端对账翻转；附言（quip）后台落一条 assistant 文本消息，
+      // 前端确认成功后短暂轮询 /api/messages?after_id= 拾取
       const data = outcome.data as Record<string, unknown>;
-      handler.afterExecute?.({ db, llm: llm ?? getDefaultLLMClient(), opId }, data);
+      const postscript = handler.afterExecute?.(
+        { db, llm: llm ?? getDefaultLLMClient(), opId },
+        data,
+      );
+      if (postscript !== undefined && postscript !== null) {
+        const messages = createMessagesService(db);
+        void Promise.resolve(postscript)
+          .then((text) => {
+            if (typeof text === "string" && text.length > 0) {
+              messages.appendMessage({ role: "assistant", contentText: text, specJson: null });
+            }
+          })
+          .catch(() => {
+            // 附言失败静默：卡片翻转已是确认反馈
+          });
+      }
       res.json({
         ...data,
         status: "executed",

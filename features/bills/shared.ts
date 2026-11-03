@@ -25,7 +25,6 @@ export const BillConfirmCardProps = z.object({
       after: z.record(z.string(), z.unknown()).nullable(),
     })
     .nullable(),
-  quip: z.string().nullable(),
   warning: z.string().nullable(),
 });
 

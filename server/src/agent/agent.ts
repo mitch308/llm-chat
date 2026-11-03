@@ -8,6 +8,7 @@ import { createOpsService } from "../ops/ops.service";
 import { ASM } from "../features";
 import {
   confirmCardLines,
+  readOpResult,
   type OpCardInput,
   type OpHandler,
   type ToolEntry,
@@ -187,6 +188,10 @@ export async function* runAgent(opts: {
   let currentRound = 0;
   /** 服务端直出卡片待发行：executeToolInner 无法 yield，先攒这里，本轮工具执行完后统一发出并收尾回合。 */
   let serverCardLines: string[] | null = null;
+  /** 确认后附言（quip）：execute_op 成功时由 afterExecute 返回，本轮工具后作为文本补进消息。 */
+  let turnPostscript: string | null = null;
+  /** execute_op 成功即收尾回合：旧卡片对账翻转 + 附言文本已到位，不再要模型轮。 */
+  let endTurnAfterTools = false;
 
   /** handler 提供 cardSpec 时构造卡片并入队；返回是否已接管（接管则回喂不再带 hint）。 */
   function emitServerCard(handler: OpHandler, input: OpCardInput): boolean {
@@ -364,27 +369,22 @@ export async function* runAgent(opts: {
           if (outcome.status === "invalid") {
             return JSON.stringify({ ok: false, error: outcome.message });
           }
+          if (outcome.status === "already") {
+            // 幂等重放：不重跑 afterExecute（quip 已生成过），附言用首次的 quip
+            const stored = readOpResult(db, p.op_id);
+            if (stored.quip) turnPostscript = stored.quip;
+            endTurnAfterTools = true;
+            return JSON.stringify({ ok: true, status: "already" });
+          }
           const data = outcome.data as Record<string, unknown>;
-          // handler 后置（写结果 + quip 转后台生成补写），工具立即返回（不拖慢回合与卡片对账信号）
-          handler.afterExecute?.({ db, llm, opId: p.op_id }, data);
-          let opPayload: Record<string, unknown> = {};
-          try {
-            opPayload = JSON.parse(proposal.payload_json) as Record<string, unknown>;
-          } catch {
-            // 坏 payload 容忍：cardSpec 的 executed 态只用 data，不依赖 payload
+          // 确认后附言（quip）：executed 态不再直出 saved 卡片——旧消息的 pending 卡片
+          // 经 GET /ops 对账翻转，附言作为文本补进回合消息并收尾回合（LLM 调用准则）
+          const postscript = await handler.afterExecute?.({ db, llm, opId: p.op_id }, data);
+          if (typeof postscript === "string" && postscript.length > 0) {
+            turnPostscript = postscript;
           }
-          if (
-            emitServerCard(handler, {
-              opId: p.op_id,
-              kind: proposal.kind,
-              status: "executed",
-              payload: opPayload,
-              data,
-            })
-          ) {
-            return JSON.stringify({ ok: true, status: outcome.status, card: "server" });
-          }
-          return JSON.stringify({ ok: true, status: outcome.status, ...data });
+          endTurnAfterTools = true;
+          return JSON.stringify({ ok: true, status: outcome.status });
         } catch (err) {
           return JSON.stringify({
             ok: false,
@@ -457,6 +457,18 @@ export async function* runAgent(opts: {
         yield { type: "spec", line } as AgentEvent;
       }
       serverCardLines = null;
+      break;
+    }
+
+    // 确认后附言（quip）：作为文本补进本轮消息，回合收尾（不花模型轮）
+    if (endTurnAfterTools) {
+      if (turnPostscript) {
+        const delta = (roundText.length > 0 ? "\n" : "") + turnPostscript;
+        textParts.push({ round: currentRound, delta });
+        yield { type: "text", delta } as AgentEvent;
+        turnPostscript = null;
+      }
+      endTurnAfterTools = false;
       break;
     }
   }

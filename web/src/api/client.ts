@@ -38,10 +38,12 @@ export async function streamChat(
 
 export async function getMessages(opts: {
   beforeId?: number;
+  afterId?: number;
   limit?: number;
 }): Promise<{ items: ServerMessage[] }> {
   const params = new URLSearchParams();
   if (opts.beforeId) params.set("before_id", String(opts.beforeId));
+  if (opts.afterId) params.set("after_id", String(opts.afterId));
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   const res = await fetch(`/api/messages${qs ? `?${qs}` : ""}`);

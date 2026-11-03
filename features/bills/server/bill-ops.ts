@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { writeOpResult, type LLMClient, type OpHandler } from "@llm-chat/features/server";
+import { attachQuip, mergeQuipIntoResult } from "./quip";
 import { OpRunError, type RunResult } from "../../../server/src/ops/ops.service";
 import {
   createBill,
@@ -143,10 +144,13 @@ export function billOpHandler(kind: OpAction): OpHandler {
   return {
     argPayload: billOpPayload,
     execute: (payload, env) => runBillAction(env.db, kind, payload),
-    afterExecute: ({ db, llm, opId }, data) => {
-      // 结果先落 {data, quip:null}，quip 后台生成后补写（不阻塞确认响应）
+    afterExecute: async ({ db, llm, opId }, data) => {
+      // 结果先落 {data, quip:null}；quip 生成（内含 15s 超时兜底）作为确认后附言返回，
+      // 由调用方决定去处（agent 文本通道出文本 / 动作路由后台落一条文本消息）
       writeOpResult(db, opId, data, null);
-      attachQuipInBackground(db, llm, opId, (data as { bill: Bill }).bill);
+      const quip = await attachQuip(db, llm, (data as { bill: Bill }).bill);
+      if (quip) mergeQuipIntoResult(db, opId, quip);
+      return quip ?? undefined;
     },
     cardHint: {
       created:
@@ -154,68 +158,54 @@ export function billOpHandler(kind: OpAction): OpHandler {
       duplicate:
         '该提议已存在（重复调用 propose_op 不会创建新提议）。禁止再调用任何工具；立即输出 ```spec 代码块：/root 指向一个 BillConfirmCard 元素，props 必须包含此 op_id 与 status="pending"，然后正常结束。',
     },
+    /** cardSpec：propose_op 成功后服务端直出 pending 确认卡片并收尾回合。
+     *  executed 态不再出卡片——旧消息的 pending 卡片经 GET /ops 对账翻转，
+     *  quip 走 afterExecute 附言以文本消息输出（不进卡片）。 */
     cardSpec: (input, env) => {
-      if (input.status === "pending") {
-        const p = input.payload;
-        let data: Record<string, unknown>;
-        let diff: { before: Record<string, unknown> | null; after: Record<string, unknown> | null } | null = null;
-        if (kind === "bill_create") {
-          data = {
-            type: p.type === "income" ? "income" : "expense",
-            amount_yuan: p.amount_yuan,
-            item: p.item,
-            category: p.category,
-            date: p.date,
-            note: typeof p.note === "string" ? p.note : null,
-          };
-        } else {
-          const before = getBill(env.db, Number(p.id));
-          const beforeData = before ? billCardData(before) : null;
-          if (kind === "bill_delete") {
-            // 删除确认：卡片展示将删除的记录
-            data = (beforeData ?? { type: "expense", amount_yuan: 0, item: String(p.item ?? ""), category: String(p.category ?? ""), date: String(p.date ?? ""), note: null }) as Record<string, unknown>;
-            diff = { before: beforeData, after: null };
-          } else {
-            // 修改确认：data 为提议后的新状态，diff 展示 变更前→变更后
-            const after: Record<string, unknown> = beforeData ? { ...beforeData } : { type: "expense", note: null };
-            if (p.amount_yuan !== undefined) after.amount_yuan = p.amount_yuan;
-            if (p.item !== undefined) after.item = p.item;
-            if (p.category !== undefined) after.category = p.category;
-            if (p.date !== undefined) after.date = p.date;
-            if (p.note !== undefined) after.note = typeof p.note === "string" ? p.note : null;
-            data = after;
-            diff = { before: beforeData, after };
-          }
-        }
-        return {
-          type: "BillConfirmCard",
-          props: {
-            op_id: input.opId,
-            kind,
-            status: "pending",
-            data,
-            diff,
-            quip: null,
-            warning:
-              kind === "bill_create" && hasSimilarBill(env.db, input.payload)
-                ? "今天已有一笔类似记录"
-                : null,
-          },
+      if (input.status !== "pending") return null;
+      const p = input.payload;
+      let data: Record<string, unknown>;
+      let diff: { before: Record<string, unknown> | null; after: Record<string, unknown> | null } | null = null;
+      if (kind === "bill_create") {
+        data = {
+          type: p.type === "income" ? "income" : "expense",
+          amount_yuan: p.amount_yuan,
+          item: p.item,
+          category: p.category,
+          date: p.date,
+          note: typeof p.note === "string" ? p.note : null,
         };
+      } else {
+        const before = getBill(env.db, Number(p.id));
+        const beforeData = before ? billCardData(before) : null;
+        if (kind === "bill_delete") {
+          // 删除确认：卡片展示将删除的记录
+          data = (beforeData ?? { type: "expense", amount_yuan: 0, item: String(p.item ?? ""), category: String(p.category ?? ""), date: String(p.date ?? ""), note: null }) as Record<string, unknown>;
+          diff = { before: beforeData, after: null };
+        } else {
+          // 修改确认：data 为提议后的新状态，diff 展示 变更前→变更后
+          const after: Record<string, unknown> = beforeData ? { ...beforeData } : { type: "expense", note: null };
+          if (p.amount_yuan !== undefined) after.amount_yuan = p.amount_yuan;
+          if (p.item !== undefined) after.item = p.item;
+          if (p.category !== undefined) after.category = p.category;
+          if (p.date !== undefined) after.date = p.date;
+          if (p.note !== undefined) after.note = typeof p.note === "string" ? p.note : null;
+          data = after;
+          diff = { before: beforeData, after };
+        }
       }
-      // executed：从落库 bill 还原；quip 后台生成，卡片自轮询补齐
-      const bill = (input.data as { bill?: Bill } | null)?.bill;
-      if (!bill) return null;
       return {
         type: "BillConfirmCard",
         props: {
           op_id: input.opId,
           kind,
-          status: "saved",
-          data: billCardData(bill),
-          diff: null,
-          quip: null,
-          warning: null,
+          status: "pending",
+          data,
+          diff,
+          warning:
+            kind === "bill_create" && hasSimilarBill(env.db, input.payload)
+              ? "今天已有一笔类似记录"
+              : null,
         },
       };
     },

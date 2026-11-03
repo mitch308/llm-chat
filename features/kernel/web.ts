@@ -141,3 +141,21 @@ export function provideOpsSync(): Ref<number> {
 export function useOpsSync(): Ref<number> | undefined {
   return inject(OpsSyncKey, undefined);
 }
+
+const MessageSyncKey: InjectionKey<Ref<number>> = Symbol("message-sync");
+
+export { MessageSyncKey };
+
+/**
+ * 确认动作成功后自增的附言拾取信号：服务端在确认后把附言（quip）后台落一条文本消息，
+ * ChatView 监听该信号，短暂轮询 /api/messages?after_id= 拾取并渲染进 live 尾巴。
+ */
+export function provideMessageSync(): Ref<number> {
+  const version = ref(0);
+  provide(MessageSyncKey, version);
+  return version;
+}
+
+export function useMessageSync(): Ref<number> | undefined {
+  return inject(MessageSyncKey, undefined);
+}

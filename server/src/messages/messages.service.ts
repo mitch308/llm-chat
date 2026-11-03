@@ -9,8 +9,8 @@ export interface Message {
 }
 
 export interface MessagesService {
-  /** 按 id 降序（新→旧）；beforeId 取比它更早（id 更小）的消息。 */
-  listMessages(opts: { beforeId?: number; limit?: number }): Message[];
+  /** 按 id 降序（新→旧）；beforeId 取比它更早（id 更小）、afterId 取比它更新（id 更大）的消息。 */
+  listMessages(opts: { beforeId?: number; afterId?: number; limit?: number }): Message[];
   appendMessage(input: {
     role: "user" | "assistant";
     contentText: string;
@@ -22,6 +22,7 @@ export function createMessagesService(db: Database.Database): MessagesService {
   const listStmt = db.prepare(
     `SELECT * FROM messages
      WHERE (@beforeId IS NULL OR id < @beforeId)
+       AND (@afterId IS NULL OR id > @afterId)
      ORDER BY id DESC
      LIMIT @limit`,
   );
@@ -32,9 +33,9 @@ export function createMessagesService(db: Database.Database): MessagesService {
   );
 
   return {
-    listMessages({ beforeId, limit = 100 }) {
+    listMessages({ beforeId, afterId, limit = 100 }) {
       const capped = Math.min(Math.max(1, limit), 200);
-      return listStmt.all({ beforeId: beforeId ?? null, limit: capped }) as Message[];
+      return listStmt.all({ beforeId: beforeId ?? null, afterId: afterId ?? null, limit: capped }) as Message[];
     },
     appendMessage({ role, contentText, specJson = null }) {
       return appendStmt.get({

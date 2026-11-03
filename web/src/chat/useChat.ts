@@ -1,6 +1,6 @@
 import { computed, reactive, ref, type Ref } from "vue";
-import { streamChat } from "../api/client";
-import { useHistory } from "./useHistory";
+import { getMessages, streamChat } from "../api/client";
+import { fromServer, useHistory } from "./useHistory";
 import type { ChatMsg } from "./types";
 
 /** 工具事件的过渡文案：让工具执行期的等待可见。 */
@@ -32,6 +32,7 @@ export function useChat(opts?: {
   const history = useHistory();
   const liveTail = ref<ChatMsg[]>([]);
   const streaming = ref(false);
+  const pickingUp = ref(false);
   let controller: AbortController | null = null;
 
   const messages = computed<ChatMsg[]>(() => [...history.window.value, ...liveTail.value]);
@@ -93,6 +94,42 @@ export function useChat(opts?: {
     }
   }
 
+  /**
+   * 确认动作后的附言拾取：服务端把附言（quip）后台落一条 assistant 文本消息，
+   * 这里短暂轮询 /api/messages?after_id=，拿到新消息即追加进 live 尾巴并停止。
+   */
+  function pickupAfterAction(): void {
+    if (pickingUp.value) return;
+    pickingUp.value = true;
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+      void (async () => {
+        try {
+          const maxId = messages.value.reduce((n, m) => Math.max(n, m.id ?? 0), 0);
+          const { items } = await getMessages({ afterId: maxId || undefined, limit: 50 });
+          for (const serverMsg of items) {
+            if (serverMsg.role !== "assistant") continue; // 用户消息已在 live 尾巴里
+            const msg = fromServer(serverMsg);
+            if (messages.value.some((m) => m.id === msg.id)) continue;
+            liveTail.value.push(msg);
+          }
+          const got = items.some((m) => m.role === "assistant");
+          // 拿到附言或轮询窗口（8 次 × 3s ≈ quip 15s 上限 + 余量）耗尽即停
+          if (got || ticks >= 8) {
+            clearInterval(timer);
+            pickingUp.value = false;
+          }
+        } catch {
+          if (ticks >= 8) {
+            clearInterval(timer);
+            pickingUp.value = false;
+          }
+        }
+      })();
+    }, 3000);
+  }
+
   return {
     messages,
     streaming,
@@ -101,5 +138,6 @@ export function useChat(opts?: {
     loadOlder: history.loadOlder,
     canLoadOlder: history.canLoadOlder,
     loadingOlder: history.loading,
+    pickupAfterAction,
   };
 }

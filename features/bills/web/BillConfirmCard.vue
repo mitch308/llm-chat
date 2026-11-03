@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import { getOps, handleAction, useOpsSync } from "@llm-chat/features/web";
+import { onMounted, ref, watch } from "vue";
+import { getOps, handleAction, useMessageSync, useOpsSync } from "@llm-chat/features/web";
 
 type CardStatus = "pending" | "saved" | "executed" | "cancelled" | "expired" | "error";
 
@@ -18,63 +18,25 @@ const props = withDefaults(
       note?: string | null;
     };
     diff?: { before: Record<string, unknown> | null; after: Record<string, unknown> | null } | null;
-    quip?: string | null;
     warning?: string | null;
   }>(),
-  { status: "pending", kind: "bill_create", diff: null, quip: null, warning: null },
+  { status: "pending", kind: "bill_create", diff: null, warning: null },
 );
 
 const status = ref<CardStatus>(props.status === "executed" ? "saved" : props.status);
-const quip = ref<string | null>(props.quip ?? null);
 const error = ref<string | null>(null);
 const busy = ref(false);
 
-/** 向服务端核对真实状态：pending 卡片挂载/对账信号时翻转状态；
- *  saved 态缺 quip（后台异步生成，实测 ~13s）时延迟对账补齐。 */
-let quipPollTimer: ReturnType<typeof setTimeout> | null = null;
-let quipPolls = 0;
-
-function scheduleQuipPoll(): void {
-  if (quip.value || status.value !== "saved" || quipPolls >= 3) return;
-  quipPolls += 1;
-  quipPollTimer = setTimeout(() => {
-    void recheck();
-  }, 4000 * quipPolls);
-}
-
-interface OpStatusPayload {
-  status?: string;
-  result_json?: string | null;
-}
-
-function applyRecheck(real: OpStatusPayload): void {
-  let incomingQuip: string | null = null;
-  if (real.result_json) {
-    try {
-      const parsed = JSON.parse(real.result_json) as { quip?: string | null };
-      incomingQuip = parsed.quip ?? null;
-    } catch {
-      // result_json 解析失败：仅丢 quip
-    }
-  }
-  if (status.value === "pending") {
-    if (real.status && real.status !== "pending") {
-      status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
-      if (incomingQuip) quip.value = incomingQuip;
-    }
-  } else if (status.value === "saved" && !quip.value && incomingQuip) {
-    quip.value = incomingQuip;
-  }
-}
-
+/** 向服务端核对真实状态：pending 卡片在挂载/对账信号时翻转（翻转后只读，无需再查）。
+ *  quip 不进卡片——确认后由服务端落一条文本消息（MessageSync 信号触发拾取）。 */
 async function recheck(): Promise<void> {
-  // pending：状态可能翻转；saved 且无 quip：可能后台 quip 已生成；其余无需请求
-  if (status.value !== "pending" && !(status.value === "saved" && !quip.value)) return;
+  if (status.value !== "pending") return;
   try {
     const { items } = await getOps([props.op_id]);
-    const real = items[0] as OpStatusPayload | undefined;
-    if (real) applyRecheck(real);
-    scheduleQuipPoll();
+    const real = items[0] as { status?: string } | undefined;
+    if (real?.status && real.status !== "pending") {
+      status.value = real.status === "executed" ? "saved" : (real.status as CardStatus);
+    }
   } catch {
     // 状态查询失败：保持本地态
   }
@@ -91,9 +53,8 @@ if (opsSync) {
   });
 }
 
-onUnmounted(() => {
-  if (quipPollTimer) clearTimeout(quipPollTimer);
-});
+/** 确认成功后自增：ChatView 据此轮询拾取服务端后台落库的附言消息（quip）。 */
+const messageSync = useMessageSync();
 
 const actionName =
   props.kind === "bill_update" || props.kind === "bill_delete" ? props.kind : "bill_create";
@@ -105,8 +66,7 @@ async function confirm() {
   try {
     const result = await handleAction(actionName, { op_id: props.op_id });
     status.value = result.status === "executed" || result.status === "already" ? "saved" : "error";
-    if (result.quip) quip.value = result.quip;
-    scheduleQuipPoll();
+    if (messageSync) messageSync.value += 1;
   } catch (e) {
     // 语义化终态：过期/取消的提议翻转为对应只读态，而非红字错误（按钮随之消失）
     const code = (e as { code?: string }).code;
@@ -162,7 +122,6 @@ async function cancel() {
     <div v-else-if="status === 'expired'" class="result expired">提议已过期</div>
 
     <div v-if="error" class="error">{{ error }}</div>
-    <div v-if="status === 'saved' && quip" class="quip">💬 {{ quip }}</div>
   </div>
 </template>
 
@@ -263,13 +222,5 @@ button:disabled {
   margin-top: 8px;
   font-size: 12px;
   color: #dc2626;
-}
-.quip {
-  margin-top: 8px;
-  font-size: 13px;
-  background: #f0f9ff;
-  border-radius: 8px;
-  padding: 6px 10px;
-  color: #0369a1;
 }
 </style>

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ref } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 
-// 网络函数走 mock；OpsSync 的 provide/inject 用真实现（kernel/web.ts 原样导出）
+// 网络函数走 mock；OpsSync/MessageSync 的 provide/inject 用真实现（kernel/web.ts 原样导出）
 vi.mock("@llm-chat/features/web", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@llm-chat/features/web")>();
   return {
@@ -13,7 +13,7 @@ vi.mock("@llm-chat/features/web", async (importOriginal) => {
   };
 });
 
-import { getOps, handleAction, OpsSyncKey } from "@llm-chat/features/web";
+import { getOps, handleAction, MessageSyncKey, OpsSyncKey } from "@llm-chat/features/web";
 import BillConfirmCard from "./BillConfirmCard.vue";
 
 const baseProps = {
@@ -28,7 +28,6 @@ const baseProps = {
     note: null,
   },
   diff: null,
-  quip: null,
   warning: null,
 };
 
@@ -47,25 +46,31 @@ describe("BillConfirmCard", () => {
     expect(w.find("button.cancel").exists()).toBe(true);
   });
 
-  it("点确认 → handleAction → 已保存 + quip，按钮消失", async () => {
+  it("点确认 → handleAction → 已保存 + 附言拾取信号自增，按钮消失", async () => {
     vi.mocked(handleAction).mockResolvedValue({
       status: "executed",
       bill: { id: 1 },
       deleted: false,
-      quip: "这周第3件衣服👕",
+      quip: null, // quip 走服务端后台落文本消息，不随响应返回
     } as never);
 
-    const w = mount(BillConfirmCard, { props: baseProps });
+    const messageSync = ref(0);
+    const w = mount(BillConfirmCard, {
+      props: baseProps,
+      global: { provide: { [MessageSyncKey]: messageSync } },
+    });
     await w.find("button.confirm").trigger("click");
     await flushPromises();
 
     expect(handleAction).toHaveBeenCalledWith("bill_create", { op_id: "op-1" });
     expect(w.text()).toContain("已保存");
-    expect(w.text()).toContain("这周第3件衣服👕");
+    // quip 不进卡片
+    expect(w.text()).not.toContain("💬");
+    expect(messageSync.value).toBe(1); // 触发附言拾取
     expect(w.find("button.confirm").exists()).toBe(false);
   });
 
-  it("restores saved state and quip from GET /ops on mount (I6)", async () => {
+  it("restores saved state from GET /ops on mount (I6)", async () => {
     const { getOps } = await import("@llm-chat/features/web");
     vi.mocked(getOps).mockResolvedValue({
       items: [
@@ -84,19 +89,18 @@ describe("BillConfirmCard", () => {
     await flushPromises();
 
     expect(w.text()).toContain("已保存");
-    expect(w.text()).toContain("这周第3件衣服👕");
+    expect(w.text()).not.toContain("这周第3件衣服👕"); // quip 不进卡片
     expect(w.find("button.confirm").exists()).toBe(false);
 
     // 还原 mock，避免泄漏到后续用例
     vi.mocked(getOps).mockResolvedValue({ items: [] });
   });
 
-  it("executed 态只读显示 quip，无按钮", () => {
+  it("executed 态只读无按钮", () => {
     const w = mount(BillConfirmCard, {
-      props: { ...baseProps, status: "saved", quip: "记好啦" },
+      props: { ...baseProps, status: "saved" },
     });
     expect(w.text()).toContain("已保存");
-    expect(w.text()).toContain("记好啦");
     expect(w.find("button.confirm").exists()).toBe(false);
     expect(w.find("button.cancel").exists()).toBe(false);
   });
@@ -157,7 +161,6 @@ describe("BillConfirmCard", () => {
 
     expect(w.find("button.confirm").exists()).toBe(false);
     expect(w.text()).toContain("已保存");
-    expect(w.text()).toContain("记好啦");
     expect(getOps).toHaveBeenCalledTimes(2);
   });
 
@@ -185,35 +188,5 @@ describe("BillConfirmCard", () => {
 
     expect(w.find("button.confirm").exists()).toBe(false);
     expect(w.text()).toContain("已取消");
-  });
-
-  it("保存后 quip 未就绪 → 延迟对账补齐（回归：quip 后台异步生成）", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.mocked(getOps).mockResolvedValue({ items: [] });
-      vi.mocked(handleAction).mockResolvedValue({
-        status: "executed",
-        bill: { id: 9 },
-        deleted: false,
-        quip: null, // quip 转后台生成，响应先不带
-      } as never);
-
-      const w = mount(BillConfirmCard, { props: baseProps });
-      await flushPromises();
-      await w.find("button.confirm").trigger("click");
-      await flushPromises();
-      expect(w.text()).toContain("已保存");
-      expect(w.text()).not.toContain("💬");
-
-      // 后台生成完成：4s 后的延迟对账补齐 quip
-      vi.mocked(getOps).mockResolvedValue({
-        items: [{ status: "executed", result_json: JSON.stringify({ quip: "记好啦🍜" }) }],
-      });
-      await vi.advanceTimersByTimeAsync(4000);
-
-      expect(w.text()).toContain("记好啦🍜");
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });
