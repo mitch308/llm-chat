@@ -192,6 +192,8 @@ export async function* runAgent(opts: {
   let turnPostscript: string | null = null;
   /** execute_op 成功即收尾回合：旧卡片对账翻转 + 附言文本已到位，不再要模型轮。 */
   let endTurnAfterTools = false;
+  /** propose_op 确认语（服务端直出）：模型沉默时补在卡片前的消息文本。 */
+  let serverNarration: string | null = null;
 
   /** handler 提供 cardSpec 时构造卡片并入队；返回是否已接管（接管则回喂不再带 hint）。 */
   function emitServerCard(handler: OpHandler, input: OpCardInput): boolean {
@@ -308,6 +310,14 @@ export async function* runAgent(opts: {
               data: null,
             })
           ) {
+            const narration = handler.proposeNarration?.({
+              opId: existing.op_id,
+              kind: p.kind,
+              status: "pending",
+              payload,
+              data: null,
+            });
+            if (narration) serverNarration = narration;
             return JSON.stringify({
               ok: true,
               duplicate: true,
@@ -337,6 +347,15 @@ export async function* runAgent(opts: {
             data: null,
           })
         ) {
+          // 确认语服务端直出：模型在该轮保持沉默时补在卡片前（模型说话则以模型为准）
+          const narration = handler.proposeNarration?.({
+            opId: proposal.op_id,
+            kind: proposal.kind,
+            status: "pending",
+            payload,
+            data: null,
+          });
+          if (narration) serverNarration = narration;
           return JSON.stringify({
             ok: true,
             op_id: proposal.op_id,
@@ -450,8 +469,13 @@ export async function* runAgent(opts: {
     }
     if (cancelled) break;
 
-    // 服务端直出卡片：附到本轮工具之后，回合立即收尾（LLM 调用准则：不花模型轮）
+    // 服务端直出卡片：确认语（模型沉默时）+ 卡片附到本轮工具之后，回合立即收尾（LLM 调用准则：不花模型轮）
     if (serverCardLines) {
+      if (serverNarration && roundText.length === 0) {
+        textParts.push({ round: currentRound, delta: serverNarration });
+        yield { type: "text", delta: serverNarration } as AgentEvent;
+      }
+      serverNarration = null;
       for (const line of serverCardLines) {
         specLines.push(line);
         yield { type: "spec", line } as AgentEvent;
@@ -477,7 +501,8 @@ export async function* runAgent(opts: {
   yield* emitSplit(splitter.end());
 
   const contentText = collapseRepeatedRounds(textParts, currentRound + 1);
-  if (!cancelled || contentText.length > 0 || specLines.length > 0) {
+  // 无可见内容（无文本无卡片）不落库——杜绝空气泡（确认附言已有兜底文本，此条件防回归）
+  if (contentText.length > 0 || specLines.length > 0) {
     const saved = messages.appendMessage({
       role: "assistant",
       contentText,

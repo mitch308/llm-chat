@@ -91,6 +91,9 @@ export interface OpHandler {
    *  不再消耗模型轮次（LLM 调用准则：服务端已确定的内容不消耗模型轮次）。
    *  返回 null（或未提供）时回退 cardHint，由模型出卡片。 */
   cardSpec?(input: OpCardInput, env: ToolEnv): OpCardComponent | null;
+  /** propose_op 成功后的确认语（服务端直出）：模型在该轮保持沉默时由 agent 补进消息文本。
+   *  模型自己说了话则以模型的话为准，不叠加。 */
+  proposeNarration?(input: OpCardInput): string;
 }
 
 /** 直出卡片的 spec JSONL 行（/root + /elements/confirm-card，与模型手写格式一致）。 */

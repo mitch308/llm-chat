@@ -7,7 +7,7 @@ pnpm monorepo：`server/`（Node+TS 单服务：REST API + AGENT 运行时 + SQL
 ```bash
 pnpm install
 pnpm dev            # 并行起 server(127.0.0.1:8787) + web(vite 5173，/api 代理到 8787)
-pnpm -r test        # 全部测试（计数以实测为准，当前 server 156 + web 52——server/web 的 vitest 会顺带收集 features 侧用例；全部无网络、无真实 API key）
+pnpm -r test        # 全部测试（计数以实测为准，当前 server 160 + web 52——server/web 的 vitest 会顺带收集 features 侧用例；全部无网络、无真实 API key）
 
 # 单包 / 单文件（必须进包目录或用 --filter；根目录没有 vitest）
 cd server && npx vitest run src/ops/ops.test.ts
@@ -28,7 +28,7 @@ pnpm --filter @llm-chat/server test
 - **依赖注入贯穿**：`createApp({db, llm})`（`server/src/app.ts`）；fetchers/articleFetch/fts5Enabled/ttlMs/now 全部可注入。新增功能保持这个模式，别在测试里碰真网络。
 - **features 架构（业务与核心的边界）**：一个业务 = `features/<名>/` 一个目录（`shared.ts` 组件契约单源 + `server/` + `web/`），核心只消费注册贡献物。server 侧 `server/src/features.ts` 模块加载时扫描 `features/` 下含 `server/index.ts` 的目录（**目录名排序 = 注册顺序**）组装成 ASM（DDL/种子/路由/工具/catalog/技能/ops）；web 侧 `web/src/render/registry.ts` 用 `import.meta.glob` + 顶层 await 组装。组装期键冲突（tool/组件/动作/op kind/组件 type，含内置 cancel_op）直接抛错。**增 feature**：建目录 → 两侧 index.ts default 导出 define*Feature 注册 → 在 `features/kernel/consistency.test.ts` 与 `web/src/render/registry.test.ts` 的清单并集断言里加 `*_COMPONENTS` → 跑 `pnpm -r test`。**删 feature**：把目录移出 features/ 或整体删除（**features/ 内改名不会移除**——扫描只看目录内是否含 server/index.ts）+ 清两处断言引用；漏清会得到守卫测试的模块收集错误（Cannot find module），**新增**漏加清单则是并集断言失败（两侧集合不等）——两者都响亮、不会静默丢失。详见 `docs/superpowers/specs/2026-10-28-features-architecture.md`。
 - **SSE 协议**：服务端做文字/JSONL 分离（`chat/streamSplitter.ts`，内部事件用 `{kind}`），对前端事件是 `{"type":"text"|"spec"|"tool"|"done"|"error"}`。历史消息的 spec 以 JSONL 行数组存 `messages.spec_json`。
-- **写操作必须走提议生命周期**（`ops/ops.service.ts`）：服务端发 op_id、全局最多 1 个 pending、TTL 10 分钟、executed 幂等重放。动作路由有 kind 一致性守卫（`POST /api/actions/:name` 的 name 必须等于提议的 kind，否则 409 OP_KIND_MISMATCH）——别绕过。确认卡片只在提议时由服务端经 `OpHandler.cardSpec` 直出一次（propose 成功即收尾回合；handler 未提供 cardSpec 时回退 `cardHint` 由模型出卡）；execute 成功**不再出卡片**——旧消息卡片经 GET /ops 对账翻转，quip 经 `afterExecute` 附言以文本消息输出（文本通道补进回合消息、按钮通道后台落库 + 前端拾取信号）。新记账措辞禁止"改成/修改"（除非用户明确要求改某笔）。
+- **写操作必须走提议生命周期**（`ops/ops.service.ts`）：服务端发 op_id、全局最多 1 个 pending、TTL 10 分钟、executed 幂等重放。动作路由有 kind 一致性守卫（`POST /api/actions/:name` 的 name 必须等于提议的 kind，否则 409 OP_KIND_MISMATCH）——别绕过。确认卡片与确认语都在提议时由服务端直出一次（`OpHandler.cardSpec`/`proposeNarration`，模型在该轮保持沉默；handler 未提供 cardSpec 时回退 `cardHint` 由模型出卡）；execute 成功**不再出卡片**——旧消息卡片经 GET /ops 对账翻转，quip 经 `afterExecute` 附言以文本消息输出（文本通道补进回合消息、按钮通道后台落库 + 前端拾取信号），quip 失败兜底「已保存 ✅」，无可见内容的回合不落库。新记账措辞禁止"改成/修改"（除非用户明确要求改某笔）。
 - **新闻关键词检索刻意用 LIKE，不用 FTS MATCH**：FTS5 unicode61 把 CJK+拉丁混排标题（"上周的AI新闻"）切成单一 token，`MATCH 'AI'` 命中不了。`news_fts` 表存在但检索路径不用它；要换就上 trigram 分词器并重写测试。
 - 账单金额库内一律 `amount_cents` 整数；类目两级（种子在 `features/bills/server/seeds.ts`），bills 必须挂**叶子**类目；父类名查询在 `features/bills/server/bills.service.ts` 展开为全部子类。
 - DB 无迁移系统：核心 DDL 在 `db/schema.ts`，业务表 DDL 由各 feature 经 `ctx.ddl`/`ctx.ddlOptional` 贡献（`db/connection.ts` 合并顺序执行，可选条目失败降级 FTS→LIKE）。改列 = 改 DDL + `pnpm db:rebuild` 删库重建（开发期可接受；实现在 `db/rebuild.ts` + `scripts/rebuild-db.ts`）。

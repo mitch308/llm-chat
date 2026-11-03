@@ -23,7 +23,7 @@ const BILL_SKILL_BODY = `- 金额支持 元/块/万元 表达，amount_yuan 用�
 
 1. 提取：type(expense/income)、amount_yuan、item、category(叶子名)、date、note
 2. 金额缺失或含糊 → 纯文字追问具体金额
-3. 调 propose_op(kind="bill_create", payload={type, amount_yuan, item, category, date, note})，同一轮附一句简短说明（如"好的，帮你记下…请确认"）；确认卡片由服务端直接下发并结束回合——不要再自己输出卡片，也不要重复说明。措辞规则：新记账一律说"记一笔/记下"，即使与上下文里的旧账相似也是新的一笔，禁止说"改成/修改"（除非用户明确要求修改某笔且已按修改流程定位到目标）
+3. 调 propose_op(kind="bill_create", payload={type, amount_yuan, item, category, date, note})。该轮保持沉默——确认语与确认卡片都由服务端自动生成下发，不要输出任何文字或卡片。措辞规则（仅在确需说明时适用）：新记账一律说"记一笔/记下"，即使与上下文里的旧账相似也是新的一笔，禁止说"改成/修改"（除非用户明确要求修改某笔且已按修改流程定位到目标）
 4. 疑似重复（工具返回或上下文提示同金额同类目同日已存在）→ 卡片 warning 字段提醒"今天已有一笔类似记录"
 5. 用户文字回复"确认/对/保存吧" → 调 execute_op(op_id)；已保存卡片由服务端直接下发，执行失败时才需要文字说明
 6. 用户要修改/取消 → 引导点卡片按钮或直接说明

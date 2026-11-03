@@ -244,4 +244,27 @@ describe("cardSpec：服务端直出确认卡片（agent 循环消费）", () =>
       after: null,
     });
   });
+
+  it("proposeNarration：三种 kind 的确认语（服务端直出，模型沉默时补进消息）", () => {
+    const create = billOpHandler("bill_create").proposeNarration!(
+      cardInput("bill_create", createPayload),
+    );
+    expect(create).toContain("记下一笔");
+    expect(create).toContain("衣服");
+    expect(create).toContain("200");
+    expect(create).toContain("请确认");
+    expect(create).not.toContain("改成");
+
+    const del = billOpHandler("bill_delete").proposeNarration!(
+      cardInput("bill_delete", { id: 1 }),
+    );
+    expect(del).toContain("删除");
+    expect(del).toContain("请确认");
+
+    const upd = billOpHandler("bill_update").proposeNarration!(
+      cardInput("bill_update", { id: 1, amount_yuan: 150 }),
+    );
+    expect(upd).toContain("修改");
+    expect(upd).toContain("请确认");
+  });
 });

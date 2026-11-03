@@ -418,6 +418,110 @@ describe("runAgent", () => {
     expect(status.status).toBe("executed");
   });
 
+  it("propose 轮模型沉默 → 服务端自动生成确认语 + 卡片（不花模型轮）", async () => {
+    let llmRounds = 0;
+    const llm = lazyLLM((n) => {
+      llmRounds = n + 1;
+      if (n === 0) {
+        return [
+          {
+            type: "tool_calls",
+            calls: [
+              {
+                id: "call_1",
+                name: "propose_op",
+                arguments: JSON.stringify({
+                  kind: "bill_create",
+                  payload: {
+                    type: "expense",
+                    amount_yuan: 3,
+                    item: "早饭",
+                    category: "三餐",
+                    date: "2026-11-03",
+                  },
+                }),
+              },
+            ],
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const events = await collect(llm);
+
+    // 序列：tool → 确认语（服务端直出）→ spec×2 → done（渲染时确认语在卡片上方）
+    expect(events[0]).toEqual({ type: "tool", name: "propose_op" });
+    expect(events[1].type).toBe("text");
+    expect((events[1] as { delta: string }).delta).toContain("记下一笔");
+    const specs = events.filter((e) => e.type === "spec") as { type: "spec"; line: string }[];
+    expect(specs).toHaveLength(2);
+    expect(events[events.length - 1].type).toBe("done");
+    expect(llmRounds).toBe(1);
+
+    const svc = createMessagesService(db);
+    const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
+    expect(assistant.content_text).toContain("记下一笔");
+    expect(JSON.parse(assistant.spec_json!) as string[]).toHaveLength(2);
+  });
+
+  it("execute_op 成功但 quip 失败 → 落「已保存 ✅」兜底文本，不落空气泡", async () => {
+    const seed = createOpsService(db).proposeOp("bill_create", {
+      amount_yuan: 4,
+      item: "早饭",
+      category: "三餐",
+      date: "2026-11-03",
+    });
+    // quip 生成调用直接抛错（模拟 glm 超时/失败）
+    const llm: LLMClient = {
+      async *stream(input) {
+        if (input.tools.length === 0) throw new Error("quip api down");
+        yield {
+          type: "tool_calls",
+          calls: [
+            { id: "c1", name: "execute_op", arguments: JSON.stringify({ op_id: seed.op_id }) },
+          ],
+        };
+      },
+    };
+
+    const events = await collect(llm);
+
+    expect(events.some((e) => e.type === "spec")).toBe(false);
+    const texts = events.filter((e) => e.type === "text") as { delta: string }[];
+    expect(texts.map((t) => t.delta).join("")).toContain("已保存");
+    const svc = createMessagesService(db);
+    const assistant = svc.listMessages({ limit: 5 }).find((m) => m.role === "assistant")!;
+    expect(assistant.content_text.length).toBeGreaterThan(0);
+  });
+
+  it("回合无任何可见内容（无文本无卡片）→ 不落空 assistant 消息", async () => {
+    // 查询工具回喂后模型整轮沉默（round 1 无文本无调用）→ 旧逻辑会落一条空消息
+    const catId = (db.prepare("SELECT id FROM categories WHERE name='三餐'").get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO bills (type, amount_cents, item, category_id, date) VALUES ('expense', 300, '早饭', ?, '2026-11-03')`,
+    ).run(catId);
+    const llm = lazyLLM((n) => {
+      if (n === 0) {
+        return [
+          {
+            type: "tool_calls",
+            calls: [
+              { id: "c1", name: "query_bills", arguments: JSON.stringify({ from: "2026-11-01", to: "2026-11-30" }) },
+            ],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const events = await collect(llm);
+
+    expect(events[events.length - 1].type).toBe("done");
+    const svc = createMessagesService(db);
+    expect(svc.listMessages({ limit: 10 }).some((m) => m.role === "assistant")).toBe(false);
+  });
+
   it("execute_op 失败（提议不存在）→ 不直出卡片，模型解释轮保留", async () => {
     const llm = lazyLLM((n) =>
       n === 0

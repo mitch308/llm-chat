@@ -150,7 +150,25 @@ export function billOpHandler(kind: OpAction): OpHandler {
       writeOpResult(db, opId, data, null);
       const quip = await attachQuip(db, llm, (data as { bill: Bill }).bill);
       if (quip) mergeQuipIntoResult(db, opId, quip);
-      return quip ?? undefined;
+      // 附言兜底：quip 失败/超时也必须有可见确认反馈，绝不产生空气泡
+      return quip ?? (kind === "bill_delete" ? "已删除 ✅" : "已保存 ✅");
+    },
+    /** propose_op 成功后的确认语：模型在 propose 轮保持沉默，由 agent 补进消息文本
+     *  （措辞机械生成，从根上杜绝"新记被说成修改"）。 */
+    proposeNarration: (input) => {
+      const p = input.payload as {
+        item?: string;
+        amount_yuan?: number;
+        category?: string;
+        date?: string;
+      };
+      if (kind === "bill_create") {
+        return `好的，帮你记下一笔：${p.item ?? ""} ¥${p.amount_yuan ?? ""}（${p.category ?? ""}，${p.date ?? ""}），请确认。`;
+      }
+      if (kind === "bill_delete") {
+        return "好的，确认后删除这笔账单，请确认。";
+      }
+      return "好的，帮你修改这笔账单，请确认下方变更内容。";
     },
     cardHint: {
       created:
